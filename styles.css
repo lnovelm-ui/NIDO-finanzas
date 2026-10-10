@@ -206,3 +206,8 @@ input.d{border:1px solid var(--line);background:var(--surface-2);border-radius:1
 .tog{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);font-weight:600;cursor:pointer}
 .count{display:flex;align-items:baseline;gap:8px}
 .count .n{font-family:var(--display);font-size:3rem;font-weight:700;line-height:1}
+
+.pw{position:relative;display:block}
+.pw input{padding-right:44px!important}
+.eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;cursor:pointer;font-size:1.1rem;font-family:var(--emoji);width:34px;height:30px;border-radius:8px}
+.eye:hover{background:var(--surface-2)}
