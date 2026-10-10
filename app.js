@@ -213,7 +213,8 @@ function render(){
   const TI={inicio:"🐷",presupuesto:"🧮",mes:"📅",movs:"🧾",historico:"📊",ahorro:"🎯",altovelo:"🏡",importar:"📥"};
   const pt=$("#page-title"); if(pt) pt.textContent=TT[S.tab]||""; const pi=$("#page-ic"); if(pi) pi.textContent=TI[S.tab]||"🐷";
   const main=$("#main");
-  if(!S.db){ main.innerHTML=`<div class="empty">Abre Nido desde Claude con tu sesión iniciada para ver vuestros datos.</div>`; return; }
+  if(S.login){ main.innerHTML=vLogin(); if(pt) pt.textContent="Entrar"; const pi2=$("#page-ic"); if(pi2) pi2.textContent="🔐"; bindLogin(); return; }
+  if(!S.db){ main.innerHTML=`<div class="empty">Cargando…</div>`; return; }
   if(!(S.ready.meses&&S.ready.plan&&S.ready.metas&&S.ready.alto)){ main.innerHTML=`<div class="empty">Cargando…</div>`; return; }
   if(!S.plan){ main.innerHTML=`<div class="empty">Falta la configuración del plan.</div>`; return; }
   if(!mesesOrden().length && S.tab!=="importar" && S.tab!=="altovelo") S.tab="importar";
@@ -513,7 +514,7 @@ function vImportar(){
   return `<section class="panel"><div class="card">
     <div class="card-h"><h2>Subir el extracto del banco</h2>${mesesOrden().length?`<button class="btn ghost" id="imp-back">Volver</button>`:""}</div>
     <p class="note">El Excel de movimientos de la 6103, de un mes o de varios. Lo que ya esté guardado no se duplica. También puedes soltar aquí una copia de Nido (.json) para cargar todos los datos.</p>
-    ${S.local?`<div class="row" style="margin-top:10px"><button class="btn soft" id="exp-copia">Descargar copia de seguridad</button><span class="small muted">Los datos se guardan solo en este navegador. Haz copia de vez en cuando.</span></div>`:""}
+    ${S.local||S.cloud?`<div class="row" style="margin-top:10px"><button class="btn soft" id="exp-copia">Descargar copia de seguridad</button><span class="small muted">${S.cloud?`Conectada como ${esc(S.user)}; los datos están en la nube y se ven en todos vuestros dispositivos.`:"Los datos se guardan solo en este navegador. Haz copia de vez en cuando."}</span>${S.cloud?`<button class="btn ghost" id="salir">Cerrar sesión</button>`:""}</div>`:""}
     <label class="drop" id="drop" style="margin-top:12px">Arrastra aquí el archivo o <u>elígelo</u><input type="file" id="file" accept=".xls,.xlsx,.csv,.json" hidden></label>
     ${imp?(imp.error?`<div class="alert warn" style="margin-top:14px"><span class="ic">!</span><div>${esc(imp.error)}</div></div>`:`
       <div style="margin-top:16px"><h3>${imp.nuevos.length} movimientos nuevos · ${imp.dup} ya estaban</h3>
@@ -602,25 +603,75 @@ function bind(){
   const ok=$("#imp-ok"); if(ok) ok.onclick=confirmarImport;
   const no=$("#imp-no"); if(no) no.onclick=()=>{ S.imp=null; render(); };
   const ex=$("#exp-copia"); if(ex) ex.onclick=exportarCopia;
+  const sl=$("#salir"); if(sl) sl.onclick=async()=>{ if(confirm("¿Cerrar sesión en este dispositivo?")){ await S.sb.auth.signOut(); location.reload(); } };
   const bk=$("#imp-back"); if(bk) bk.onclick=()=>{ S.imp=null; irA("inicio"); };
 }
 document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>irA(b.dataset.t));
 $("#go-import").onclick=()=>irA("importar");
 
-// ---------- almacenamiento local (fuera de Claude, p. ej. GitHub Pages) ----------
-function localDB(){
-  const K="dino_db_v1"; let st={}; try{ st=JSON.parse(localStorage.getItem(K))||{}; }catch(e){ st={}; }
-  const subs=[]; const save=()=>{ try{ localStorage.setItem(K,JSON.stringify(st)); }catch(e){ setStatus("El navegador no deja guardar datos"); } };
+// ---------- almacenamiento: mismo formato en local y en la nube ----------
+function makeStore(st, writer){
+  const subs=[]; const notify=()=>subs.forEach(f=>f());
   const snap=(id,d)=>({id,exists:d!==undefined,data:()=>d,metadata:{}});
-  const notify=()=>subs.forEach(f=>f());
   return {
     collection:c=>({onSnapshot:cb=>{ const f=()=>cb({docs:Object.keys(st).filter(k=>k.startsWith(c+"/")).sort().map(k=>snap(k.slice(c.length+1),st[k]))}); subs.push(f); setTimeout(f,0); return ()=>{}; }}),
     doc:p=>({ onSnapshot:cb=>{ const f=()=>cb(snap(p.split("/").pop(),st[p])); subs.push(f); setTimeout(f,0); return ()=>{}; },
       get:async()=>snap(p.split("/").pop(),st[p]),
-      set:async d=>{ st[p]=JSON.parse(JSON.stringify(d)); save(); notify(); } }),
-    dump:()=>JSON.parse(JSON.stringify(st))
+      set:async d=>{ st[p]=JSON.parse(JSON.stringify(d)); notify(); await writer(p,st[p]); } }),
+    dump:()=>JSON.parse(JSON.stringify(st)),
+    _st:st, _notify:notify
   };
 }
+const LKEY="dino_db_v1";
+function leerLocal(){ try{ return JSON.parse(localStorage.getItem(LKEY))||{}; }catch(e){ return {}; } }
+function localDB(){
+  const st=leerLocal();
+  return makeStore(st, async()=>{ try{ localStorage.setItem(LKEY,JSON.stringify(st)); }catch(e){ setStatus("El navegador no deja guardar datos"); } });
+}
+
+// ---------- nube (Supabase): los mismos datos en todos los dispositivos ----------
+const SUPA_URL="https://vaqbeirrqtdcpzolxpap.supabase.co";
+const SUPA_KEY="sb_publishable_yiuLOOWVwbTRT65Llr2PCw_HtjFDxIC";
+const PERMITIDOS=["lauranovelmunoz@gmail.com","francisco@inmobiliariadn.com"];
+async function nubeDB(sb,email){
+  const st={}, mios={};
+  const cargar=async()=>{ const {data,error}=await sb.from("docs").select("path,data"); if(error) throw error; for(const k in st) delete st[k]; data.forEach(r=>st[r.path]=r.data); };
+  await cargar();
+  const store=makeStore(st, async(path,data)=>{ mios[path]=Date.now(); const {error}=await sb.from("docs").upsert({path,data,updated_at:new Date().toISOString(),updated_by:email}); if(error){ setStatus("No se pudo guardar en la nube; revisa la conexión"); throw error; } });
+  sb.channel("nido-docs").on("postgres_changes",{event:"*",schema:"public",table:"docs"},pl=>{
+    const path=(pl.new&&pl.new.path)||(pl.old&&pl.old.path); if(!path) return;
+    if(mios[path]&&Date.now()-mios[path]<4000) return;
+    if(pl.eventType==="DELETE") delete st[path]; else st[path]=pl.new.data;
+    store._notify(); setStatus("Actualizado desde otro dispositivo");
+  }).subscribe();
+  document.addEventListener("visibilitychange",async()=>{ if(document.visibilityState==="visible"){ try{ await cargar(); store._notify(); }catch(e){} } });
+  return store;
+}
+function vLogin(){
+  const L=S.login||{};
+  if(L.fatal) return `<div class="card" style="max-width:520px"><div class="card-h"><h2>🔒 Sin acceso</h2></div><p>${esc(L.fatal)}</p><button class="btn soft" id="lg-out">Entrar con otro correo</button></div>`;
+  return `<section class="panel" style="max-width:520px">
+    <div class="card"><div class="card-h"><h2>🔐 Entrar en Nido</h2></div>
+      <p class="note" style="margin:0 0 12px">Escribe tu correo y te mandamos un enlace y un código de acceso. Solo hace falta la primera vez en cada dispositivo.</p>
+      ${!L.enviado?`<div class="row"><label class="field" style="flex:1 1 240px">Correo<input class="n" style="width:100%;text-align:left;font-family:var(--body);font-weight:400" type="email" id="lg-email" value="${esc(L.email||"")}" placeholder="tu@correo.com" autocomplete="email"></label><button class="btn" id="lg-send">Enviarme el acceso</button></div>`
+      :`<div class="alert ok"><span class="ic em">📬</span><div>Te hemos enviado un correo a <b>${esc(L.email)}</b>. Pulsa el enlace desde este mismo dispositivo o escribe aquí el código que trae.</div></div>
+        <div class="row" style="margin-top:12px"><label class="field">Código${`<input class="n" style="width:140px;letter-spacing:.2em" inputmode="numeric" id="lg-code" autocomplete="one-time-code">`}</label><button class="btn" id="lg-ok">Entrar</button><button class="btn ghost" id="lg-back">Cambiar correo</button></div>`}
+      ${L.error?`<div class="alert warn" style="margin-top:12px"><span class="ic em">⚠️</span><div>${esc(L.error)}</div></div>`:""}
+    </div></section>`;
+}
+function bindLogin(){
+  const sb=S.sb, L=S.login;
+  const send=$("#lg-send"); if(send) send.onclick=async()=>{ const email=($("#lg-email").value||"").trim().toLowerCase(); L.email=email; L.error=null;
+    if(!PERMITIDOS.includes(email)){ L.error="Ese correo no tiene acceso a Nido."; return render(); }
+    send.disabled=true; send.textContent="Enviando…";
+    const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname,shouldCreateUser:true}});
+    if(error){ L.error="No se pudo enviar el correo ("+error.message+"). Espera un minuto y vuelve a probar."; } else L.enviado=true; render(); };
+  const ok=$("#lg-ok"); if(ok) ok.onclick=async()=>{ const token=($("#lg-code").value||"").replace(/\D/g,""); ok.disabled=true;
+    const {error}=await sb.auth.verifyOtp({email:L.email,token,type:"email"}); if(error){ L.error="El código no es válido o ha caducado. Pide otro."; render(); } else location.reload(); };
+  const back=$("#lg-back"); if(back) back.onclick=()=>{ S.login={email:L.email}; render(); };
+  const out=$("#lg-out"); if(out) out.onclick=async()=>{ await sb.auth.signOut(); S.login={}; render(); };
+}
+
 function exportarCopia(){
   const st=S.db.dump(); const out={meses:{},plan:st["config/plan"]||null,metas:st["config/metas"]||null,altovelo:st["config/altovelo"]||null};
   for(const k in st) if(k.startsWith("meses/")) out.meses[k.slice(6)]=st[k];
@@ -658,9 +709,22 @@ render();
 (async()=>{
   let db=null;
   try{ db=window.claude&&window.claude.use?await window.claude.use("db"):null; }catch(e){ db=null; }
+  if(!db&&window.supabase&&window.supabase.createClient){
+    const sb=window.supabase.createClient(SUPA_URL,SUPA_KEY); S.sb=sb;
+    const {data:{session}}=await sb.auth.getSession();
+    if(!session){ S.login={}; render(); sb.auth.onAuthStateChange((ev,ses)=>{ if(ses&&ev==="SIGNED_IN") location.reload(); }); return; }
+    const email=(session.user.email||"").toLowerCase();
+    if(!PERMITIDOS.includes(email)){ S.login={fatal:`${email} no tiene acceso a Nido.`}; render(); return; }
+    setStatus("Conectando…");
+    try{ db=await nubeDB(sb,email); }catch(e){ S.login={fatal:"No se pudo conectar con la nube. Revisa la conexión y recarga la página."}; render(); return; }
+    S.cloud=true; S.user=email;
+    // primera vez: si la nube está vacía y este dispositivo tiene datos, se suben
+    const loc=leerLocal(); const nubeVacia=!Object.keys(db._st).some(k=>k.startsWith("meses/"));
+    if(nubeVacia&&Object.keys(loc).some(k=>k.startsWith("meses/"))){ setStatus("Subiendo tus datos a la nube…"); for(const k of Object.keys(loc)) await db.doc(k).set(loc[k]); setStatus("Datos subidos a la nube"); }
+  }
   if(!db){ db=localDB(); S.local=true; }
   S.db=db;
-  if(S.local){ const pl=await db.doc("config/plan").get(); if(!pl.exists) await db.doc("config/plan").set({nomina:0,cisco:0,pagaExtra:0,nPagasExtra:2,huchas:[],fijos:[],presupuesto:{},recibosManuales:[],reglas:[]}); }
+  if(S.local||S.cloud){ const pl=await db.doc("config/plan").get(); if(!pl.exists) await db.doc("config/plan").set({nomina:0,cisco:0,pagaExtra:0,nPagasExtra:2,huchas:[],fijos:[],presupuesto:{},recibosManuales:[],reglas:[]}); }
   if(!S.local) try{ const u=await window.claude.use("user"); if(u&&u.can){ const w=await u.can("data.write"); if(w===false) S.writable=false; } }catch(e){}
   const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
   const err=e=>setStatus(e&&e.code==="revoked"?"Acceso retirado":"No se pudieron leer los datos; recarga");
