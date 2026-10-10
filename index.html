@@ -47,6 +47,6 @@
 </div>
 <script>try{const _h=new Date().toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long",year:"numeric"});document.getElementById("hoy").textContent=_h.charAt(0).toUpperCase()+_h.slice(1);}catch(e){}</script>
 <script src="app.js"></script>
-<script>if("serviceWorker" in navigator && location.protocol==="https:"){navigator.serviceWorker.register("sw.js").catch(()=>{});}</script>
+<script>if("serviceWorker" in navigator && location.protocol==="https:"){navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).catch(()=>{});}</script>
 </body>
 </html>
