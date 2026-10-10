@@ -186,6 +186,10 @@ function recibosAuto(){
   for(const m of mesesOrden()) for(const x of S.meses[m].movs){ if(kindOf(x.cat)==="anual"&&x.i<0){ const o=(g[x.c]??={c:x.c,cat:x.cat,det:0,meses:[]}); o.det+=-x.i; o.meses.push(+m.slice(5)); } }
   return Object.values(g).filter(o=>!ocul[o.c]).map(o=>({...o,importe: ovr[o.c]!=null? +ovr[o.c] : o.det}));
 }
+// La nómina que entra a partir del día 25 es la del mes siguiente
+const sigMes=ym=>{ let [y,m]=ym.split("-").map(Number); m++; if(m>12){m=1;y++;} return y+"-"+String(m).padStart(2,"0"); };
+const mesImputado=x=>x.cat==="Nómina"&&+x.f.slice(8)>=25?sigMes(x.f.slice(0,7)):x.f.slice(0,7);
+function ingresosMes(m){ let t=0; for(const mm of [m, ...mesesOrden().filter(z=>sigMes(z)===m)]) for(const x of (S.meses[mm]||{movs:[]}).movs) if(kindOf(x.cat)==="ing"&&mesImputado(x)===m) t+=x.i; return t; }
 const presMes=(c,nm)=>(+(S.plan.presupuesto||{})[c]||0);
 function totales(){
   const p=S.plan, b=p.presupuesto||{};
@@ -368,7 +372,8 @@ function vMes(){
   const ms=mesesOrden(); const m=S.mesSel&&S.meses[S.mesSel]?S.mesSel:ms[ms.length-1];
   const movs=S.meses[m].movs, b=S.plan.presupuesto||{}, nm=+m.slice(5);
   const g={}; let ing=0,ext=0;
-  for(const x of movs){ const k=kindOf(x.cat); if(k==="ing") ing+=x.i; else if(k==="ext") ext-=x.i; else if(k==="var") g[x.cat]=(g[x.cat]||0)-x.i; }
+  ing=ingresosMes(m);
+  for(const x of movs){ const k=kindOf(x.cat); if(k==="ing") {} else if(k==="ext") ext-=x.i; else if(k==="var") g[x.cat]=(g[x.cat]||0)-x.i; }
   const mov=movidoEfectivo(m); if(g["Efectivo"]) g["Efectivo"]=Math.max(0,g["Efectivo"]-mov);
   const esAct=m===hoyYM(); const dias=new Date(+m.slice(0,4),nm,0).getDate(); const ritmo=esAct?new Date().getDate()/dias:1;
   const vcats=CAT_ORDER.filter(c=>kindOf(c)==="var"&&(presMes(c,nm)>0||g[c]));
@@ -408,7 +413,7 @@ function vMovs(){
       <label class="field">Tipo<select class="s" id="f-kind"><option value="">Todos</option>${Object.entries(KN).map(([k,v])=>`<option value="${k}" ${k===f.kind?"selected":""}>${v}</option>`).join("")}</select></label>
     </div>
     <p class="small muted" style="margin:10px 0 0">${rows.length} movimientos · saldo ${e2(tot)}. Al cambiar una categoría se aplica a ese concepto en todos los meses y en las próximas importaciones.</p>
-    <div class="list" style="margin-top:6px">${sh.map(({m,i,x})=>`<div class="it"><div class="main">${cic(x.cat)}<div style="display:flex;flex-direction:column;min-width:0"><span>${esc(x.c)}</span><span class="small muted">${x.f.slice(8)}/${x.f.slice(5,7)}/${x.f.slice(2,4)}</span></div></div>
+    <div class="list" style="margin-top:6px">${sh.map(({m,i,x})=>`<div class="it"><div class="main">${cic(x.cat)}<div style="display:flex;flex-direction:column;min-width:0"><span>${esc(x.c)}</span><span class="small muted">${x.f.slice(8)}/${x.f.slice(5,7)}/${x.f.slice(2,4)}${mesImputado(x)!==x.f.slice(0,7)?` · <span class="chip ok">cuenta para ${MESL[+mesImputado(x).slice(5)-1]}</span>`:""}</span></div></div>
       <div class="right"><span class="eur" style="color:${x.i>0?"var(--mint)":"inherit"}">${e2(x.i)}</span></div>
       <div class="meta"><select class="s" id="c-${m}-${i}" data-m="${m}" data-i="${i}" data-cat="1" ${dis()}>${CAT_ORDER.map(c=>`<option ${c===x.cat?"selected":""}>${esc(c)}</option>`).join("")}</select>
         <input class="t" style="flex:1 1 180px;max-width:360px;font-size:.82rem" id="n-${m}-${i}" data-m="${m}" data-i="${i}" data-nota="1" value="${esc(x.nota||"")}" placeholder="📝 Añadir nota (regalo, error…)" ${dis()}>
