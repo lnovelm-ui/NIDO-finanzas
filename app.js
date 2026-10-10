@@ -201,11 +201,56 @@ function totales(){
 
 // ---------- guardado ----------
 let tPlan=null,tMetas=null;
-function guardarPlan(){ clearTimeout(tPlan); tPlan=setTimeout(async()=>{ if(!S.db) return; try{ await S.db.doc("config/plan").set(JSON.parse(JSON.stringify(S.plan))); setStatus("Guardado"); }catch(e){ errW(e); } },600); }
-function guardarMetas(){ clearTimeout(tMetas); tMetas=setTimeout(async()=>{ if(!S.db) return; try{ await S.db.doc("config/metas").set(JSON.parse(JSON.stringify(S.metas))); setStatus("Guardado"); }catch(e){ errW(e); } },600); }
-let tAlto=null;
-function guardarAlto(){ clearTimeout(tAlto); tAlto=setTimeout(async()=>{ if(!S.db) return; try{ await S.db.doc("config/altovelo").set(JSON.parse(JSON.stringify(S.alto))); setStatus("Guardado"); }catch(e){ errW(e); } },600); }
-async function guardarMes(m){ if(!S.db) return; try{ await S.db.doc("meses/"+m).set(JSON.parse(JSON.stringify(S.meses[m]))); setStatus("Guardado"); }catch(e){ errW(e); } }
+// Los cambios quedan pendientes hasta pulsar «Guardar»; «Descartar» vuelve a lo último guardado.
+S.dirty=new Set();
+const DOCS={"config/plan":"plan","config/metas":"metas","config/altovelo":"alto"};
+const docData=p=>p.startsWith("meses/")?S.meses[p.slice(6)]:S[DOCS[p]];
+const ETQ=p=>p==="config/plan"?"Presupuesto":p==="config/metas"?"Metas de ahorro":p==="config/altovelo"?"Altovelo":p.startsWith("meses/")?"Movimientos de "+mLong(p.slice(6)):p;
+function marcar(p){ S.dirty.add(p); pintarBarra(); }
+function guardarPlan(){ marcar("config/plan"); }
+function guardarMetas(){ marcar("config/metas"); }
+function guardarAlto(){ marcar("config/altovelo"); }
+async function guardarMes(m){ marcar("meses/"+m); }
+async function guardarYa(p){ if(!S.db) return; try{ await S.db.doc(p).set(JSON.parse(JSON.stringify(docData(p)))); }catch(e){ errW(e); } }
+async function guardarCambios(){
+  if(!S.db||!S.dirty.size) return;
+  const antes={}, st=S.db.dump(); const paths=[...S.dirty];
+  for(const p of paths) antes[p]=st[p]===undefined?null:st[p];
+  setStatus("Guardando…");
+  try{ for(const p of paths) await S.db.doc(p).set(JSON.parse(JSON.stringify(docData(p)))); }catch(e){ errW(e); return; }
+  S.dirty.clear(); S.ultimo={paths,antes}; await apuntarHistorial(paths,antes,"Cambios guardados");
+  setStatus("Guardado"); pintarBarra(); toast("Cambios guardados",true);
+}
+function descartarCambios(){
+  const st=S.db.dump();
+  for(const p of S.dirty){ const d=st[p]===undefined?null:JSON.parse(JSON.stringify(st[p])); if(p.startsWith("meses/")){ if(d) S.meses[p.slice(6)]=d; else delete S.meses[p.slice(6)]; } else S[DOCS[p]]=d||S[DOCS[p]]; }
+  S.dirty.clear(); S.catAplicar=null; pintarBarra(); render(); toast("Cambios descartados");
+}
+async function restaurar(paths,antes,motivo){
+  const st=S.db.dump(), ahora={};
+  for(const p of paths) ahora[p]=st[p]===undefined?null:st[p];
+  for(const p of paths){ if(antes[p]!=null) await S.db.doc(p).set(antes[p]); }
+  await apuntarHistorial(paths,ahora,motivo);
+}
+async function deshacerUltimo(){ if(!S.ultimo) return; const u=S.ultimo; S.ultimo=null; await restaurar(u.paths,u.antes,"Deshacer"); toast("Cambio deshecho"); }
+async function apuntarHistorial(paths,antes,motivo){
+  try{ const st=S.db.dump(); const h=st["config/historial"]||{items:[]}; const items=[{t:new Date().toISOString(),u:S.user||"",motivo,paths,antes},...(h.items||[])].slice(0,12); await S.db.doc("config/historial").set({items}); }catch(e){}
+}
+function pintarBarra(){
+  let b=document.getElementById("savebar");
+  if(!S.dirty.size){ if(b) b.remove(); return; }
+  if(!b){ b=document.createElement("div"); b.id="savebar"; b.className="savebar"; document.body.appendChild(b); }
+  b.innerHTML=`<span>✏️ Tienes cambios sin guardar <span class="small" style="opacity:.75">(${[...S.dirty].map(ETQ).join(", ")})</span></span><span class="row" style="gap:8px;flex-wrap:nowrap"><button class="btn ghost" id="sb-no" style="color:#fff">Descartar</button><button class="btn" id="sb-ok" style="background:var(--gold);color:#2a2005">Guardar</button></span>`;
+  b.querySelector("#sb-ok").onclick=guardarCambios; b.querySelector("#sb-no").onclick=descartarCambios;
+}
+let tToast=null;
+function toast(t,deshacer){
+  let el=document.getElementById("toast"); if(!el){ el=document.createElement("div"); el.id="toast"; el.className="toast"; document.body.appendChild(el); }
+  el.innerHTML=`<span>${esc(t)}</span>${deshacer&&S.ultimo?`<button class="btn ghost" id="tt-undo" style="color:var(--gold)">Deshacer</button>`:""}`;
+  el.classList.add("on"); const u=el.querySelector("#tt-undo"); if(u) u.onclick=()=>{ el.classList.remove("on"); deshacerUltimo(); };
+  clearTimeout(tToast); tToast=setTimeout(()=>el.classList.remove("on"),deshacer?10000:3000);
+}
+window.addEventListener("beforeunload",e=>{ if(S.dirty&&S.dirty.size){ e.preventDefault(); e.returnValue=""; } });
 function errW(e){ if(e&&e.code==="invalid_argument"){ S.writable=false; setStatus("Solo lectura"); render(); } else setStatus("No se pudo guardar; prueba otra vez en un momento"); }
 function setStatus(t){ const el=$("#status"); if(el) el.textContent=t; }
 
@@ -365,16 +410,23 @@ function vMovs(){
     <p class="small muted" style="margin:10px 0 0">${rows.length} movimientos · saldo ${e2(tot)}. Al cambiar una categoría se aplica a ese concepto en todos los meses y en las próximas importaciones.</p>
     <div class="list" style="margin-top:6px">${sh.map(({m,i,x})=>`<div class="it"><div class="main">${cic(x.cat)}<div style="display:flex;flex-direction:column;min-width:0"><span>${esc(x.c)}</span><span class="small muted">${x.f.slice(8)}/${x.f.slice(5,7)}/${x.f.slice(2,4)}</span></div></div>
       <div class="right"><span class="eur" style="color:${x.i>0?"var(--mint)":"inherit"}">${e2(x.i)}</span></div>
-      <div class="meta"><select class="s" id="c-${m}-${i}" data-m="${m}" data-i="${i}" data-cat="1" ${dis()}>${CAT_ORDER.map(c=>`<option ${c===x.cat?"selected":""}>${esc(c)}</option>`).join("")}</select></div></div>`).join("")}</div>
+      <div class="meta"><select class="s" id="c-${m}-${i}" data-m="${m}" data-i="${i}" data-cat="1" ${dis()}>${CAT_ORDER.map(c=>`<option ${c===x.cat?"selected":""}>${esc(c)}</option>`).join("")}</select>
+        <input class="t" style="flex:1 1 180px;max-width:360px;font-size:.82rem" id="n-${m}-${i}" data-m="${m}" data-i="${i}" data-nota="1" value="${esc(x.nota||"")}" placeholder="📝 Añadir nota (regalo, error…)" ${dis()}>
+        ${S.catAplicar&&S.catAplicar.m===m&&S.catAplicar.i===i?`<button class="btn soft" id="aplicar-todos" style="padding:4px 10px;font-size:.8rem">Aplicar también a los otros ${S.catAplicar.n} de este comercio</button>`:""}</div></div>`).join("")}</div>
     ${rows.length>300?`<p class="note">Se ven los 300 más recientes; filtra para ver el resto.</p>`:""}
   </div></section>`;
 }
 function claveRegla(c){ return c.replace(/^(Bizum a |Bizum de |Recibo · |Compra Bizum · |Transferencia · |Traspaso · |Devolución · )/,"").replace(/\s*\(.*\)\s*$/,"").replace(/\s+-\s+\+?\d[\d ]+$/,"").trim(); }
 async function cambiarCat(m,i,cat){
-  const x=S.meses[m].movs[i]; const prev=x.cat; const tocados=new Set([m]);
-  for(const mm of mesesOrden()) S.meses[mm].movs.forEach(y=>{ if(y.c===x.c&&y.cat===prev){ y.cat=cat; tocados.add(mm);} });
-  x.cat=cat; const t=claveRegla(x.c); if(t.length>=3){ S.plan.reglas=(S.plan.reglas||[]).filter(r=>r.t!==t); S.plan.reglas.push({t,cat}); guardarPlan(); }
-  render(); for(const mm of tocados) await guardarMes(mm);
+  const x=S.meses[m].movs[i]; const prev=x.cat; x.cat=cat; guardarMes(m);
+  const otros=mesesOrden().reduce((n,mm)=>n+S.meses[mm].movs.filter(y=>y!==x&&y.c===x.c&&y.cat!==cat).length,0);
+  S.catAplicar=otros?{m,i,c:x.c,cat,n:otros}:null; render();
+}
+function aplicarATodos(){
+  const A=S.catAplicar; if(!A) return;
+  for(const mm of mesesOrden()) S.meses[mm].movs.forEach(y=>{ if(y.c===A.c&&y.cat!==A.cat){ y.cat=A.cat; guardarMes(mm); } });
+  const t=claveRegla(A.c); if(t.length>=3){ S.plan.reglas=(S.plan.reglas||[]).filter(r=>r.t!==t); S.plan.reglas.push({t,cat:A.cat}); guardarPlan(); }
+  S.catAplicar=null; render();
 }
 
 // ---------- HISTÓRICO ----------
@@ -535,7 +587,11 @@ function vImportar(){
       <div style="margin-top:16px"><h3>${imp.nuevos.length} movimientos nuevos · ${imp.dup} ya estaban</h3>
       <div class="list" style="margin-top:6px">${Object.entries(imp.porMes).sort().map(([m,v])=>`<div class="it"><div class="main">${mLong(m)}</div><div class="right small">${v.n} nuevos · <span style="color:var(--mint)">+${e0(v.in)}</span> · −${e0(v.out)}</div></div>`).join("")}</div>
       <div class="row" style="margin-top:12px"><button class="btn" id="imp-ok" ${imp.nuevos.length&&S.writable?"":"disabled"}>Guardar</button><button class="btn ghost" id="imp-no">Descartar</button></div></div>`):""}
-  </div></section>`;
+  </div>${vHistorial()}</section>`;
+}
+function vHistorial(){
+  if(!S.db) return ""; const h=(S.db.dump()["config/historial"]||{items:[]}).items||[]; if(!h.length) return "";
+  return `<div class="card" id="hist"><div class="card-h"><h2>🕘 Últimos cambios</h2></div><p class="note" style="margin:0 0 8px">Si algo se ha cambiado por error, pulsa "Volver atrás" en ese cambio y todo lo que tocó vuelve a como estaba antes.</p><div class="list">${h.map((it,k)=>`<div class="it"><div class="main" style="flex-direction:column;align-items:flex-start;gap:0"><span>${esc(it.motivo)} · ${esc(it.paths.map(ETQ).join(", "))}</span><span class="small muted">${new Date(it.t).toLocaleString("es-ES",{dateStyle:"short",timeStyle:"short"})}${it.u?" · "+esc(it.u.split("@")[0]):""}</span></div><div class="right"><button class="btn ghost" data-hrest="${k}">Volver atrás</button></div></div>`).join("")}</div></div>`;
 }
 function aFecha(v){
   if(v instanceof Date) return new Date(v.getTime()-v.getTimezoneOffset()*60000).toISOString().slice(0,10);
@@ -569,7 +625,7 @@ async function leerArchivo(file){
 async function confirmarImport(){
   const b=$("#imp-ok"); if(b){ b.disabled=true; b.textContent="Guardando…"; }
   const pm={}; for(const x of S.imp.nuevos) (pm[x.f.slice(0,7)]??=[]).push(x);
-  for(const [m,l] of Object.entries(pm)){ const d=S.meses[m]||{mes:m,movs:[]}; d.movs=d.movs.concat(l).sort((a,b)=>a.f.localeCompare(b.f)); S.meses[m]=d; await guardarMes(m); }
+  for(const [m,l] of Object.entries(pm)){ const d=S.meses[m]||{mes:m,movs:[]}; d.movs=d.movs.concat(l).sort((a,b)=>a.f.localeCompare(b.f)); S.meses[m]=d; await guardarYa("meses/"+m); }
   const n=S.imp.nuevos.length; S.imp=null; setStatus(n+" movimientos guardados"); irA("mes");
 }
 
@@ -613,6 +669,9 @@ function bind(){
   const fq=$("#f-q"); if(fq){ let t; fq.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ S.f.q=fq.value; render(); },250); }; }
   [["f-mes","mes"],["f-cat","cat"],["f-kind","kind"]].forEach(([id,k])=>{ const el=document.getElementById(id); if(el) el.onchange=()=>{ S.f[k]=el.value; render(); }; });
   document.querySelectorAll("select[data-cat]").forEach(el=>el.onchange=()=>cambiarCat(el.dataset.m,+el.dataset.i,el.value));
+  document.querySelectorAll("input[data-nota]").forEach(el=>el.oninput=()=>{ const x=S.meses[el.dataset.m].movs[+el.dataset.i]; x.nota=el.value; guardarMes(el.dataset.m); });
+  const at=$("#aplicar-todos"); if(at) at.onclick=aplicarATodos;
+  const hz=$("#hist"); if(hz) hz.querySelectorAll("[data-hrest]").forEach(b=>b.onclick=async()=>{ const it=(S.db.dump()["config/historial"]||{items:[]}).items[+b.dataset.hrest]; if(it&&confirm("¿Volver a como estaba antes de este cambio?")){ await restaurar(it.paths,it.antes,"Vuelta atrás"); toast("Restaurado"); } });
   const file=$("#file"), drop=$("#drop");
   if(file){ file.onchange=()=>file.files[0]&&leerArchivo(file.files[0]); drop.ondragover=e=>{e.preventDefault();drop.classList.add("on");}; drop.ondragleave=()=>drop.classList.remove("on"); drop.ondrop=e=>{e.preventDefault();drop.classList.remove("on"); const f=e.dataTransfer.files[0]; if(f) leerArchivo(f);}; }
   const ok=$("#imp-ok"); if(ok) ok.onclick=confirmarImport;
@@ -777,8 +836,8 @@ render();
   if(!S.local) try{ const u=await window.claude.use("user"); if(u&&u.can){ const w=await u.can("data.write"); if(w===false) S.writable=false; } }catch(e){}
   const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
   const err=e=>setStatus(e&&e.code==="revoked"?"Acceso retirado":"No se pudieron leer los datos; recarga");
-  db.collection("meses").onSnapshot(s=>{ const n={}; s.docs.forEach(d=>n[d.id]=JSON.parse(JSON.stringify(d.data()))); const ch=!same(n,S.meses)||!S.ready.meses; S.meses=n; S.ready.meses=true; if(ch){ setStatus(S.writable?"Al día":"Solo lectura"); render(); } },err);
-  db.doc("config/altovelo").onSnapshot(d=>{ let p=d.exists?JSON.parse(JSON.stringify(d.data())):null; if(!p){ p=JSON.parse(JSON.stringify(ALTO_DEF)); if(S.writable) db.doc("config/altovelo").set(p).catch(()=>{}); } const ch=!same(p,S.alto)||!S.ready.alto; S.alto=p; S.ready.alto=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
-  db.doc("config/plan").onSnapshot(d=>{ let p=d.exists?JSON.parse(JSON.stringify(d.data())):null; if(p&&S.writable&&(!p.migr2025||!p.migrOct26)){ if(!p.migr2025) p=migrar2025(p); if(!p.migrOct26) p=migrarOct26(p); db.doc("config/plan").set(JSON.parse(JSON.stringify(p))).catch(()=>{}); } const ch=!same(p,S.plan)||!S.ready.plan; S.plan=p; S.ready.plan=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
-  db.doc("config/metas").onSnapshot(d=>{ const p=d.exists?JSON.parse(JSON.stringify(d.data())):{metas:[],sim:{ini:0,mes:100,anos:10,r:4}}; const ch=!same(p,S.metas)||!S.ready.metas; S.metas=p; S.ready.metas=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
+  db.collection("meses").onSnapshot(s=>{ const n={}; s.docs.forEach(d=>n[d.id]=JSON.parse(JSON.stringify(d.data()))); for(const p of S.dirty) if(p.startsWith("meses/")&&S.meses[p.slice(6)]) n[p.slice(6)]=S.meses[p.slice(6)]; const ch=!same(n,S.meses)||!S.ready.meses; S.meses=n; S.ready.meses=true; if(ch){ setStatus(S.writable?"Al día":"Solo lectura"); render(); } },err);
+  db.doc("config/altovelo").onSnapshot(d=>{ if(S.dirty.has("config/altovelo")) return; let p=d.exists?JSON.parse(JSON.stringify(d.data())):null; if(!p){ p=JSON.parse(JSON.stringify(ALTO_DEF)); if(S.writable) db.doc("config/altovelo").set(p).catch(()=>{}); } const ch=!same(p,S.alto)||!S.ready.alto; S.alto=p; S.ready.alto=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
+  db.doc("config/plan").onSnapshot(d=>{ if(S.dirty.has("config/plan")) return; let p=d.exists?JSON.parse(JSON.stringify(d.data())):null; if(p&&S.writable&&(!p.migr2025||!p.migrOct26)){ if(!p.migr2025) p=migrar2025(p); if(!p.migrOct26) p=migrarOct26(p); db.doc("config/plan").set(JSON.parse(JSON.stringify(p))).catch(()=>{}); } const ch=!same(p,S.plan)||!S.ready.plan; S.plan=p; S.ready.plan=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
+  db.doc("config/metas").onSnapshot(d=>{ if(S.dirty.has("config/metas")) return; const p=d.exists?JSON.parse(JSON.stringify(d.data())):{metas:[],sim:{ini:0,mes:100,anos:10,r:4}}; const ch=!same(p,S.metas)||!S.ready.metas; S.metas=p; S.ready.metas=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
 })();
