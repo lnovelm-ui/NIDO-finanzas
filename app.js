@@ -648,28 +648,51 @@ async function nubeDB(sb,email){
   return store;
 }
 function vLogin(){
-  const L=S.login||{};
+  const L=S.login||{}, m=L.mode||"entrar";
   if(L.fatal) return `<div class="card" style="max-width:520px"><div class="card-h"><h2>🔒 Sin acceso</h2></div><p>${esc(L.fatal)}</p><button class="btn soft" id="lg-out">Entrar con otro correo</button></div>`;
+  const inp=(id,type,label,val,ac)=>`<label class="field" style="flex:1 1 100%">${label}<input class="n" style="width:100%;text-align:left;font-family:var(--body);font-weight:400" type="${type}" id="${id}" name="${id}" value="${esc(val||"")}" autocomplete="${ac}" required></label>`;
+  const T={entrar:["🔐 Entrar en Nido","Correo y contraseña. El navegador te ofrecerá guardarla y la sesión se queda abierta en este dispositivo."],
+           crear:["✨ Crear cuenta","Para quien entra por primera vez. Te llegará un correo para confirmar la cuenta; después ya entras con tu contraseña."],
+           olvido:["🔑 Crear o cambiar contraseña","Te mandamos un correo con un enlace. Ábrelo en este navegador y elige tu contraseña."],
+           nueva:["🔑 Elige tu contraseña","Mínimo 8 caracteres. Después entrarás siempre con ella."]}[m];
+  let campos="";
+  if(m==="entrar") campos=inp("lg-email","email","Correo",L.email,"username")+inp("lg-pass","password","Contraseña","","current-password");
+  if(m==="crear") campos=inp("lg-email","email","Correo",L.email,"username")+inp("lg-pass","password","Contraseña nueva","","new-password")+inp("lg-pass2","password","Repite la contraseña","","new-password");
+  if(m==="olvido") campos=inp("lg-email","email","Correo",L.email,"username");
+  if(m==="nueva") campos=`<input type="email" name="username" autocomplete="username" value="${esc(L.email||"")}" hidden>`+inp("lg-pass","password","Contraseña nueva","","new-password")+inp("lg-pass2","password","Repite la contraseña","","new-password");
+  const boton={entrar:"Entrar",crear:"Crear cuenta",olvido:"Enviarme el enlace",nueva:"Guardar contraseña"}[m];
+  const links=m==="nueva"?"":[m!=="entrar"?`<button type="button" class="btn ghost" data-lgm="entrar">Ya tengo contraseña</button>`:"",m!=="olvido"?`<button type="button" class="btn ghost" data-lgm="olvido">Crear o cambiar contraseña</button>`:"",m!=="crear"?`<button type="button" class="btn ghost" data-lgm="crear">Crear cuenta</button>`:""].join("");
   return `<section class="panel" style="max-width:520px">
-    <div class="card"><div class="card-h"><h2>🔐 Entrar en Nido</h2></div>
-      <p class="note" style="margin:0 0 12px">Escribe tu correo y te mandamos un enlace y un código de acceso. Solo hace falta la primera vez en cada dispositivo.</p>
-      ${!L.enviado?`<div class="row"><label class="field" style="flex:1 1 240px">Correo<input class="n" style="width:100%;text-align:left;font-family:var(--body);font-weight:400" type="email" id="lg-email" value="${esc(L.email||"")}" placeholder="tu@correo.com" autocomplete="email"></label><button class="btn" id="lg-send">Enviarme el acceso</button></div>`
-      :`<div class="alert ok"><span class="ic em">📬</span><div>Te hemos enviado un correo a <b>${esc(L.email)}</b>. Pulsa el enlace desde este mismo dispositivo o escribe aquí el código que trae.</div></div>
-        <div class="row" style="margin-top:12px"><label class="field">Código${`<input class="n" style="width:140px;letter-spacing:.2em" inputmode="numeric" id="lg-code" autocomplete="one-time-code">`}</label><button class="btn" id="lg-ok">Entrar</button><button class="btn ghost" id="lg-back">Cambiar correo</button></div>`}
+    <form class="card" id="lg-form" autocomplete="on"><div class="card-h"><h2>${T[0]}</h2></div>
+      <p class="note" style="margin:0 0 12px">${T[1]}</p>
+      ${L.msg?`<div class="alert ok" style="margin-bottom:12px"><span class="ic em">📬</span><div>${L.msg}</div></div>`:""}
+      <div class="row">${campos}</div>
+      <div class="row" style="margin-top:14px;align-items:center"><button class="btn" type="submit" id="lg-go">${boton}</button></div>
       ${L.error?`<div class="alert warn" style="margin-top:12px"><span class="ic em">⚠️</span><div>${esc(L.error)}</div></div>`:""}
-    </div></section>`;
+      <div class="row" style="margin-top:10px;gap:4px">${links}</div>
+    </form></section>`;
 }
 function bindLogin(){
-  const sb=S.sb, L=S.login;
-  const send=$("#lg-send"); if(send) send.onclick=async()=>{ const email=($("#lg-email").value||"").trim().toLowerCase(); L.email=email; L.error=null;
-    if(!PERMITIDOS.includes(email)){ L.error="Ese correo no tiene acceso a Nido."; return render(); }
-    send.disabled=true; send.textContent="Enviando…";
-    const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname,shouldCreateUser:true}});
-    if(error){ L.error="No se pudo enviar el correo ("+error.message+"). Espera un minuto y vuelve a probar."; } else L.enviado=true; render(); };
-  const ok=$("#lg-ok"); if(ok) ok.onclick=async()=>{ const token=($("#lg-code").value||"").replace(/\D/g,""); ok.disabled=true;
-    const {error}=await sb.auth.verifyOtp({email:L.email,token,type:"email"}); if(error){ L.error="El código no es válido o ha caducado. Pide otro."; render(); } else location.reload(); };
-  const back=$("#lg-back"); if(back) back.onclick=()=>{ S.login={email:L.email}; render(); };
+  const sb=S.sb, L=S.login, m=L.mode||"entrar";
+  document.querySelectorAll("[data-lgm]").forEach(b=>b.onclick=()=>{ const em=$("#lg-email"); S.login={mode:b.dataset.lgm,email:em?em.value.trim():L.email}; render(); });
   const out=$("#lg-out"); if(out) out.onclick=async()=>{ await sb.auth.signOut(); S.login={}; render(); };
+  const f=$("#lg-form"); if(!f) return;
+  f.onsubmit=async ev=>{ ev.preventDefault(); const go=$("#lg-go"); go.disabled=true;
+    const v=id=>{ const e=$("#"+id); return e?e.value:""; };
+    const email=(v("lg-email")||L.email||"").trim().toLowerCase(); L.email=email; L.error=null; L.msg=null;
+    const redir=location.origin+location.pathname;
+    try{
+      if(m!=="nueva"&&!PERMITIDOS.includes(email)) throw new Error("Ese correo no tiene acceso a Nido.");
+      if((m==="crear"||m==="nueva")&&v("lg-pass").length<8) throw new Error("La contraseña tiene que tener al menos 8 caracteres.");
+      if((m==="crear"||m==="nueva")&&v("lg-pass")!==v("lg-pass2")) throw new Error("Las dos contraseñas no coinciden.");
+      if(m==="entrar"){ const {error}=await sb.auth.signInWithPassword({email,password:v("lg-pass")}); if(error) throw new Error(/confirm/i.test(error.message)?"Falta confirmar la cuenta desde el correo que te enviamos.":"Correo o contraseña incorrectos. Si aún no tienes contraseña, pulsa «Crear o cambiar contraseña»."); history.replaceState(null,"",redir); location.reload(); return; }
+      if(m==="crear"){ const {data,error}=await sb.auth.signUp({email,password:v("lg-pass"),options:{emailRedirectTo:redir}}); if(error) throw new Error(error.message);
+        if(data.user&&data.user.identities&&data.user.identities.length===0){ await sb.auth.resetPasswordForEmail(email,{redirectTo:redir}); S.login={mode:"entrar",email,msg:`Ese correo ya tenía cuenta. Te hemos enviado a <b>${esc(email)}</b> un enlace para elegir la contraseña.`}; return render(); }
+        S.login={mode:"entrar",email,msg:`Cuenta creada. Confírmala desde el correo que te hemos enviado a <b>${esc(email)}</b> y después entra con tu contraseña.`}; return render(); }
+      if(m==="olvido"){ const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:redir}); if(error) throw new Error("No se pudo enviar el correo ("+error.message+"). Espera un minuto y vuelve a probar."); S.login={mode:"olvido",email,msg:`Te hemos enviado un enlace a <b>${esc(email)}</b>. Ábrelo en este navegador para elegir la contraseña.`}; return render(); }
+      if(m==="nueva"){ const {error}=await sb.auth.updateUser({password:v("lg-pass")}); if(error) throw new Error(/different/i.test(error.message)?"La contraseña nueva tiene que ser distinta de la anterior.":"No se pudo guardar ("+error.message+"). Pide otro enlace."); history.replaceState(null,"",redir); location.reload(); return; }
+    }catch(e){ L.error=e.message; render(); }
+  };
 }
 
 function exportarCopia(){
@@ -710,9 +733,11 @@ render();
   let db=null;
   try{ db=window.claude&&window.claude.use?await window.claude.use("db"):null; }catch(e){ db=null; }
   if(!db&&window.supabase&&window.supabase.createClient){
+    const esRecuperacion=/type=recovery/.test(location.hash);
     const sb=window.supabase.createClient(SUPA_URL,SUPA_KEY); S.sb=sb;
     const {data:{session}}=await sb.auth.getSession();
-    if(!session){ S.login={}; render(); sb.auth.onAuthStateChange((ev,ses)=>{ if(ses&&ev==="SIGNED_IN") location.reload(); }); return; }
+    if(session&&esRecuperacion){ S.login={mode:"nueva",email:session.user.email}; render(); return; }
+    if(!session){ S.login={mode:"entrar"}; render(); return; }
     const email=(session.user.email||"").toLowerCase();
     if(!PERMITIDOS.includes(email)){ S.login={fatal:`${email} no tiene acceso a Nido.`}; render(); return; }
     setStatus("Conectando…");
