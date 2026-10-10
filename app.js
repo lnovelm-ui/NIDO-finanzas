@@ -421,7 +421,7 @@ function vAhorro(){
 
 
 // ---------- ALTOVELO ----------
-const ALTO_DEF={precio:240000,arras:48000,itp:6.75,valorRef:0,notaria:2750,otros:0,reservado:0,hipoteca:92000,tipo:2.3,anos:25,fechaFirma:"2027-03-22",fechaArras:"2026-10-29",
+const ALTO_DEF={precio:240000,arras:48000,itp:6.75,valorRef:0,notaria:2750,otros:0,reservado:0,colchon:0,tipo:2.3,anos:30,fechaFirma:"2027-03-22",fechaArras:"2026-10-29",
   cuentas:[
     {n:"Trade Republic · Cisco",saldo:50000,interes:0,desde:"2026-07-01",fin:"",nota:"",incl:true},
     {n:"Revolut · Laura",saldo:25000,interes:0,desde:"2026-07-01",fin:"2026-10-16",nota:"Promoción del 3,51 % hasta el 16 de octubre; después, alrededor del 1,15 %.",incl:true},
@@ -438,11 +438,12 @@ function calcAlto(){
   const total=pend+itp+gastos;
   const cs=(A.cuentas||[]).filter(c=>c.incl!==false);
   const saldos=cs.reduce((s,c)=>s+(+c.saldo||0),0), intereses=cs.reduce((s,c)=>s+(+c.interes||0),0);
-  const fondos=saldos+intereses-(+A.reservado||0);
+  const fondos=Math.max(0,saldos+intereses-(+A.reservado||0));
   const necesaria=Math.max(0,total-fondos);
-  const H=+A.hipoteca||0, r=(+A.tipo||0)/1200, n=(+A.anos||0)*12;
+  const H=necesaria+(+A.colchon||0), r=(+A.tipo||0)/1200, n=(+A.anos||0)*12;
   const cuota=H&&n?(r?H*r/(1-Math.pow(1+r,-n)):H/n):0;
-  return {precio,arras,pend,base,itp,gastos,total,saldos,intereses,fondos,necesaria,H,cuota,sobra:fondos+H-total};
+  const intTot=Math.max(0,cuota*n-H), ltv=precio?H/precio*100:0;
+  return {precio,arras,pend,base,itp,gastos,total,saldos,intereses,fondos,necesaria,H,cuota,intTot,ltv};
 }
 function vAltovelo(){
   const A=S.alto, C=calcAlto(), df=diasA(A.fechaFirma), da=diasA(A.fechaArras);
@@ -450,7 +451,8 @@ function vAltovelo(){
   if(A.fechaFirma&&A.fechaArras&&A.fechaFirma>A.fechaArras) av.push(["warn","📝",`La firma prevista (${fechaL(A.fechaFirma)}) es posterior al plazo de las arras (${fechaL(A.fechaArras)}). Tened la prórroga firmada por escrito antes de esa fecha${da!=null&&da>=0?`: quedan ${da} días`:""}.`]);
   for(const c of (A.cuentas||[])){ const d=diasA(c.fin); if(d==null) continue; if(d<0) av.push(["info","⏰",`La promoción de <b>${esc(c.n)}</b> terminó el ${fechaL(c.fin)}. Revisa si compensa mover el dinero.`]); else if(d<=45) av.push(["warn","⏰",`La promoción de <b>${esc(c.n)}</b> termina en ${d} días (${fechaL(c.fin)}).`]); }
   if((+A.valorRef||0)>C.precio) av.push(["info","🏛️",`El valor de referencia es mayor que el precio: el ITP se calcula sobre ${e0(C.base)}.`]);
-  if(C.sobra<0) av.push(["warn","⚠️",`Con la hipoteca que habéis puesto faltan ${e0(-C.sobra)} para la firma.`]);
+  if(C.ltv>80) av.push(["warn","⚠️",`La hipoteca supera el 80 % del precio (${numTxt(Math.round(C.ltv))} %). Los bancos no suelen financiar tanto.`]);
+  for(const c of (A.cuentas||[])) if((+c.saldo||0)>200000) av.push(["warn","🔎",`Revisa el saldo de <b>${esc(c.n)}</b>: ${e0(c.saldo)} parece demasiado. ¿Sobra algún cero?`]);
   const fld=(lab,em,ctrl,help="",cls="")=>`<div class="fld ${cls}"><div class="lab"><span class="cic" style="background:var(--surface-2)" aria-hidden="true">${em}</span><span>${lab}</span></div><div>${ctrl}</div>${help?`<div class="help">${help}</div>`:""}</div>`;
   const calc=v=>`<span class="calc">${e0(v)}</span>`;
   const n2=(id,path,val)=>inNum(id,path,val,"alto");
@@ -470,11 +472,10 @@ function vAltovelo(){
       <div class="legend">${partes.map(x=>`<span><span class="dot" style="background:${x[2]}"></span>${x[0]} ${e0(x[1])}</span>`).join("")}</div>
     </div>
     <div class="kpis">
-      <div class="kpi">${tic("🏦","var(--blue-soft)")}<div class="l">Tenéis para la firma</div><div class="v">${e0(C.fondos)}</div><div class="s">saldos ${e0(C.saldos)}${+A.reservado?` · menos ${e0(A.reservado)} reservados`:""}</div></div>
+      <div class="kpi">${tic("🏦","var(--blue-soft)")}<div class="l">Vuestro dinero para la firma</div><div class="v">${e0(C.fondos)}</div><div class="s">ahorro ${e0(C.saldos)} + intereses ${e0(C.intereses)}${+A.reservado?` − ${e0(A.reservado)} reservados`:""}</div></div>
       <div class="kpi gold">${tic("✨","var(--sun-soft)")}<div class="l">Intereses generados (neto)</div><div class="v">${e0(C.intereses)}</div><div class="s">dinero extra que ya suma</div></div>
-      <div class="kpi ${C.necesaria>0?"bad":"good"}">${tic("🔑","var(--coral-soft)")}<div class="l">Hipoteca necesaria</div><div class="v">${e0(C.necesaria)}</div><div class="s">lo mínimo para cubrir la firma</div></div>
-      <div class="kpi">${tic("📆","var(--plum-soft)")}<div class="l">Cuota estimada</div><div class="v">${e0(C.cuota)}</div><div class="s">${e0(C.H)} a ${numTxt(A.anos)} años al ${numTxt(A.tipo)} %</div></div>
-      <div class="kpi ${C.sobra>=0?"good":"bad"}">${tic(C.sobra>=0?"✅":"⚠️","var(--sea-soft)")}<div class="l">${C.sobra>=0?"Os sobra tras firmar":"Os falta"}</div><div class="v">${e0(Math.abs(C.sobra))}</div><div class="s">con la hipoteca que habéis puesto</div></div>
+      <div class="kpi ${C.necesaria>0?"":"good"}">${tic("🔑","var(--coral-soft)")}<div class="l">Hipoteca necesaria</div><div class="v">${e0(C.H)}</div><div class="s">${+A.colchon?`${e0(C.necesaria)} + ${e0(A.colchon)} de colchón`:"lo que falta tras poner vuestro dinero"} · ${numTxt(Math.round(C.ltv))} % del precio</div></div>
+      <div class="kpi">${tic("📆","var(--plum-soft)")}<div class="l">Cuota a ${numTxt(A.anos)} años</div><div class="v">${e0(C.cuota)}<span style="font-size:.9rem;font-weight:600"> /mes</span></div><div class="s">al ${numTxt(A.tipo)} % · ${e0(C.intTot)} de intereses en total</div></div>
     </div>
     ${av.length?`<div class="alerts">${av.map(a=>`<div class="alert ${a[0]}"><span class="ic em">${a[1]}</span><div>${a[2]}</div></div>`).join("")}</div>`:""}
     <div class="grid2">
@@ -498,12 +499,15 @@ function vAltovelo(){
       <p class="note" style="margin:0 0 10px">Apunta en cada cuenta el interés neto que te marca la app del banco y actualízalo cuando quieras. Desmarca "Cuenta para la firma" si ese dinero no va al piso o ya está contado en otra cuenta.</p>
       <div style="display:grid;gap:10px">${ctas}</div>
       <button class="add" data-act="add-cta" style="margin-top:10px" ${dis()}>+ Añadir cuenta</button></div>
-    <div class="card"><div class="card-h"><h2>🔑 Hipoteca</h2></div><div class="list">
-      ${fld("Hipoteca que pedís","🏦",n2("al-hip","hipoteca",A.hipoteca),`La mínima para cubrir la firma son ${e0(C.necesaria)}.`)}
-      ${fld("Tipo de interés (%)","📈",n2("al-tipo","tipo",A.tipo))}
+    <div class="card"><div class="card-h"><h2>🔑 Hipoteca</h2><span class="tot">${e0(C.H)}</span></div><div class="list">
+      ${fld("Lo que cuesta la firma","💰",calc(C.total))}
+      ${fld("Menos vuestro dinero","🏦",calc(-C.fondos))}
+      ${fld("Colchón extra que queréis pedir","🛟",n2("al-col","colchon",A.colchon),"Opcional: si preferís pedir algo más para no quedaros a cero tras firmar.")}
+      ${fld("Reservado para muebles y otros","🛋️",n2("al-res","reservado",A.reservado),"Dinero de las cuentas que no queréis usar en la firma.")}
+      ${fld("Hipoteca a pedir","🔑",calc(C.H),`Es el ${numTxt(Math.round(C.ltv))} % del precio; los bancos suelen financiar hasta el 80 %.`,"total")}
+      ${fld("Tipo de interés (%)","📈",n2("al-tipo","tipo",A.tipo),"El HipoteCON Mixto de Cajamar: 2,30 % fijo los 5 primeros años y después euríbor + 0,60, así que la cuota cambiará a partir del sexto año.")}
       ${fld("Años","⏱️",n2("al-anos","anos",A.anos))}
-      ${fld("Reservado para muebles y otros","🛋️",n2("al-res","reservado",A.reservado),"Dinero de esas cuentas que no queréis usar en la firma.")}
-      ${fld("Cuota mensual estimada","📆",calc(C.cuota),"","total")}
+      ${fld("Cuota mensual aproximada","📆",calc(C.cuota),`${e0(C.intTot)} de intereses a lo largo de ${numTxt(A.anos)} años.`,"total")}
     </div></div>
   </section>`;
 }
@@ -650,7 +654,7 @@ async function nubeDB(sb,email){
 function vLogin(){
   const L=S.login||{}, m=L.mode||"entrar";
   if(L.fatal) return `<div class="card" style="max-width:520px"><div class="card-h"><h2>🔒 Sin acceso</h2></div><p>${esc(L.fatal)}</p><button class="btn soft" id="lg-out">Entrar con otro correo</button></div>`;
-  const inp=(id,type,label,val,ac)=>`<label class="field" style="flex:1 1 100%">${label}<input class="n" style="width:100%;text-align:left;font-family:var(--body);font-weight:400" type="${type}" id="${id}" name="${id}" value="${esc(val||"")}" autocomplete="${ac}" required></label>`;
+  const inp=(id,type,label,val,ac)=>`<label class="field" style="flex:1 1 100%">${label}<span class="pw"><input class="n" style="width:100%;text-align:left;font-family:var(--body);font-weight:400" type="${type}" id="${id}" name="${id}" value="${esc(val||"")}" autocomplete="${ac}" required>${type==="password"?`<button type="button" class="eye" data-eye="${id}" aria-label="Mostrar contraseña" title="Mostrar contraseña">👁️</button>`:""}</span></label>`;
   const T={entrar:["🔐 Entrar en Nido","Correo y contraseña. El navegador te ofrecerá guardarla y la sesión se queda abierta en este dispositivo."],
            crear:["✨ Crear cuenta","Para quien entra por primera vez. Te llegará un correo para confirmar la cuenta; después ya entras con tu contraseña."],
            olvido:["🔑 Crear o cambiar contraseña","Te mandamos un correo con un enlace. Ábrelo en este navegador y elige tu contraseña."],
@@ -674,6 +678,7 @@ function vLogin(){
 }
 function bindLogin(){
   const sb=S.sb, L=S.login, m=L.mode||"entrar";
+  document.querySelectorAll("[data-eye]").forEach(b=>b.onclick=()=>{ const i=$("#"+b.dataset.eye); const ver=i.type==="password"; i.type=ver?"text":"password"; b.textContent=ver?"🙈":"👁️"; b.title=b.ariaLabel=ver?"Ocultar contraseña":"Mostrar contraseña"; i.focus(); });
   document.querySelectorAll("[data-lgm]").forEach(b=>b.onclick=()=>{ const em=$("#lg-email"); S.login={mode:b.dataset.lgm,email:em?em.value.trim():L.email}; render(); });
   const out=$("#lg-out"); if(out) out.onclick=async()=>{ await sb.auth.signOut(); S.login={}; render(); };
   const f=$("#lg-form"); if(!f) return;
@@ -686,10 +691,11 @@ function bindLogin(){
       if((m==="crear"||m==="nueva")&&v("lg-pass").length<8) throw new Error("La contraseña tiene que tener al menos 8 caracteres.");
       if((m==="crear"||m==="nueva")&&v("lg-pass")!==v("lg-pass2")) throw new Error("Las dos contraseñas no coinciden.");
       if(m==="entrar"){ const {error}=await sb.auth.signInWithPassword({email,password:v("lg-pass")}); if(error) throw new Error(/confirm/i.test(error.message)?"Falta confirmar la cuenta desde el correo que te enviamos.":"Correo o contraseña incorrectos. Si aún no tienes contraseña, pulsa «Crear o cambiar contraseña»."); history.replaceState(null,"",redir); location.reload(); return; }
-      if(m==="crear"){ const {data,error}=await sb.auth.signUp({email,password:v("lg-pass"),options:{emailRedirectTo:redir}}); if(error) throw new Error(error.message);
-        if(data.user&&data.user.identities&&data.user.identities.length===0){ await sb.auth.resetPasswordForEmail(email,{redirectTo:redir}); S.login={mode:"entrar",email,msg:`Ese correo ya tenía cuenta. Te hemos enviado a <b>${esc(email)}</b> un enlace para elegir la contraseña.`}; return render(); }
+      if(m==="crear"){ const {data,error}=await sb.auth.signUp({email,password:v("lg-pass"),options:{emailRedirectTo:redir}}); if(error) throw new Error(/rate|limit|seconds/i.test(error.message)?"Ahora no se puede enviar el correo: el servicio tiene un límite por hora. Prueba dentro de un rato.":error.message);
+        if(data.session){ history.replaceState(null,"",redir); location.reload(); return; }
+        if(data.user&&data.user.identities&&data.user.identities.length===0){ const r=await sb.auth.resetPasswordForEmail(email,{redirectTo:redir}); if(r.error) throw new Error(/rate|limit|seconds/i.test(r.error.message)?"Ese correo ya tiene cuenta, pero ahora no se puede enviar el enlace: el servicio de correo tiene un límite por hora. Prueba dentro de un rato con «Crear o cambiar contraseña».":"Ese correo ya tiene cuenta. Usa «Crear o cambiar contraseña» ("+r.error.message+")."); S.login={mode:"entrar",email,msg:`Ese correo ya tenía cuenta. Te hemos enviado a <b>${esc(email)}</b> un enlace para elegir la contraseña.`}; return render(); }
         S.login={mode:"entrar",email,msg:`Cuenta creada. Confírmala desde el correo que te hemos enviado a <b>${esc(email)}</b> y después entra con tu contraseña.`}; return render(); }
-      if(m==="olvido"){ const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:redir}); if(error) throw new Error("No se pudo enviar el correo ("+error.message+"). Espera un minuto y vuelve a probar."); S.login={mode:"olvido",email,msg:`Te hemos enviado un enlace a <b>${esc(email)}</b>. Ábrelo en este navegador para elegir la contraseña.`}; return render(); }
+      if(m==="olvido"){ const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:redir}); if(error) throw new Error(/rate|limit|seconds/i.test(error.message)?"Ahora no se puede enviar el correo: el servicio tiene un límite de envíos por hora. Prueba dentro de un rato.":"No se pudo enviar el correo ("+error.message+"). Espera un minuto y vuelve a probar."); S.login={mode:"olvido",email,msg:`Te hemos enviado un enlace a <b>${esc(email)}</b>. Ábrelo en este navegador para elegir la contraseña.`}; return render(); }
       if(m==="nueva"){ const {error}=await sb.auth.updateUser({password:v("lg-pass")}); if(error) throw new Error(/different/i.test(error.message)?"La contraseña nueva tiene que ser distinta de la anterior.":"No se pudo guardar ("+error.message+"). Pide otro enlace."); history.replaceState(null,"",redir); location.reload(); return; }
     }catch(e){ L.error=e.message; render(); }
   };
