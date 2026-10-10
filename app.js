@@ -164,9 +164,18 @@ try{ const t=localStorage.getItem("dino_tab"); if(t) S.tab=t; }catch(e){}
 // ---------- cálculos ----------
 const mesesOrden = () => Object.keys(S.meses).sort();
 function mesesCerrados(){ const h=hoyYM(); const c=mesesOrden().filter(m=>m<h); return c.length?c:mesesOrden(); }
-function mediaCat(){ const ms=mesesCerrados(), n=ms.length||1, r={}; for(const m of ms) for(const x of S.meses[m].movs) r[x.cat]=(r[x.cat]||0)-x.i; for(const c in r) r[c]/=n; return r; }
-const FREC={mensual:"cada mes",curso:"cada mes, sep–jun",semanal:"cada semana, sep–jun",bimestral:"cada dos meses",plazos:"5 plazos, feb–jun",trimestral:"cada tres meses"};
-const costeMes = f => { const v=+f.importe||0; return f.frec==="semanal"? v*52/12 : f.frec==="bimestral"? v/2 : f.frec==="trimestral"? v/3 : f.frec==="plazos"? v*5/12 : v; };
+function mediaCat(){ const ms=mesesCerrados(), n=ms.length||1, r={}; for(const m of ms){ for(const x of S.meses[m].movs) r[x.cat]=(r[x.cat]||0)-x.i; r["Efectivo"]=(r["Efectivo"]||0)-movidoEfectivo(m); } for(const c in r) r[c]/=n; return r; }
+const FREC={mensual:"cada mes",curso:"cada mes, sep–jun",octmay:"cada mes, oct–may",semanal:"cada semana, sep–jun",bimestral:"cada dos meses",plazos:"5 plazos, feb–jun",trimestral:"cada tres meses"};
+const costeMes = f => { const v=+f.importe||0; return f.frec==="semanal"? v*52/12 : f.frec==="bimestral"? v/2 : f.frec==="trimestral"? v/3 : f.frec==="plazos"? v*5/12 : f.frec==="octmay"? v*8/12 : v; };
+// meses en los que toca pagar cada fijo
+const toca=(f,nm)=>f.frec==="curso"||f.frec==="semanal"?(nm>=9||nm<=6):f.frec==="octmay"?(nm>=10||nm<=5):true;
+const esperadoMes=(f,nm)=>!toca(f,nm)?0:f.frec==="semanal"?(+f.importe||0)*52/12:(f.frec==="mensual"||f.frec==="curso"||f.frec==="octmay"||!f.frec)?(+f.importe||0):0;
+const pagaEfectivo=f=>!!f.ef||!f.match;
+// parte de un fijo que no se ha pagado por el banco ese mes: se da por pagada con el efectivo retirado
+const enEfectivo=(f,m)=>{ if(!pagaEfectivo(f)) return 0; const esp=esperadoMes(f,+m.slice(5)); const banco=cargos(f,m).reduce((s,c)=>s+c.a,0); return Math.max(0,esp-banco); };
+function movidoEfectivo(m){ if(!S.meses[m]) return 0; const sacado=S.meses[m].movs.filter(x=>x.cat==="Efectivo").reduce((s,x)=>s-x.i,0); const cub=(S.plan.fijos||[]).reduce((s,f)=>s+enEfectivo(f,m),0); return Math.max(0,Math.min(sacado,cub)); }
+// gasto de los fijos en el último mes con cargos (suma todos los recibos de ese mes)
+function ultimoCobro(f){ const cs=cargos(f); if(!cs.length) return null; const m=cs[cs.length-1].f.slice(0,7); const del=cs.filter(c=>c.f.startsWith(m)); return {f:del[del.length-1].f,a:del.reduce((s,c)=>s+c.a,0)}; }
 function cargos(f, soloMes){
   if(!f.match) return []; const M=f.match.toUpperCase(); const out=[];
   for(const m of mesesOrden()){ if(soloMes&&m!==soloMes) continue; for(const x of S.meses[m].movs){ const a=-x.i; if(x.i<0&&x.c.toUpperCase().includes(M)&&(f.min==null||a>=f.min)&&(f.max==null||a<=f.max)) out.push({f:x.f,a}); } }
@@ -177,8 +186,7 @@ function recibosAuto(){
   for(const m of mesesOrden()) for(const x of S.meses[m].movs){ if(kindOf(x.cat)==="anual"&&x.i<0){ const o=(g[x.c]??={c:x.c,cat:x.cat,det:0,meses:[]}); o.det+=-x.i; o.meses.push(+m.slice(5)); } }
   return Object.values(g).filter(o=>!ocul[o.c]).map(o=>({...o,importe: ovr[o.c]!=null? +ovr[o.c] : o.det}));
 }
-function efectivoFijo(nm){ const curso=!nm||nm>=9||nm<=6; return (S.plan.fijos||[]).filter(f=>!f.match&&(curso||(f.frec!=="curso"&&f.frec!=="semanal"))).reduce((s,f)=>s+costeMes(f),0); }
-const presMes=(c,nm)=>(+(S.plan.presupuesto||{})[c]||0)+(c==="Efectivo"?efectivoFijo(nm):0);
+const presMes=(c,nm)=>(+(S.plan.presupuesto||{})[c]||0);
 function totales(){
   const p=S.plan, b=p.presupuesto||{};
   const ingresos=(+p.nomina||0)+(+p.cisco||0);
@@ -187,7 +195,7 @@ function totales(){
   const anual=(recibosAuto().reduce((s,r)=>s+r.importe,0)+(p.recibosManuales||[]).reduce((s,r)=>s+(+r.importe||0),0))/12;
   const variable=CAT_ORDER.filter(c=>kindOf(c)==="var").reduce((s,c)=>s+(+b[c]||0),0);
   const margen=ingresos-huchas-fijos-anual-variable;
-  const r=mediaCat(); const varReal=Math.max(0,CAT_ORDER.filter(c=>kindOf(c)==="var").reduce((s,c)=>s+(r[c]||0),0)-efectivoFijo());
+  const r=mediaCat(); const varReal=Math.max(0,CAT_ORDER.filter(c=>kindOf(c)==="var").reduce((s,c)=>s+(r[c]||0),0));
   return {ingresos,huchas,fijos,anual,variable,margen,varReal,margenReal:ingresos-huchas-fijos-anual-varReal};
 }
 
@@ -234,9 +242,9 @@ function vInicio(){
   const pct=v=>Math.max(0,v)/Math.max(T.ingresos,1)*100;
   // avisos
   const av=[];
-  for(const f of (p.fijos||[])){ if(f.var) continue; const cs=cargos(f); const u=cs[cs.length-1]; if(u&&Math.abs(u.a-(+f.importe||0))>0.5) av.push(["warn","📈",`<b>${esc(f.n)}</b> ha cobrado ${e2(u.a)} y tienes apuntado ${e2(f.importe)}. Actualízalo en Presupuesto si es el precio nuevo.`]); }
+  for(const f of (p.fijos||[])){ if(f.var) continue; const u=ultimoCobro(f); if(u&&Math.abs(u.a-(+f.importe||0))>0.5) av.push(["warn","📈",`<b>${esc(f.n)}</b> ha cobrado ${e2(u.a)} y tienes apuntado ${e2(f.importe)}. Actualízalo en Presupuesto si es el precio nuevo.`]); }
   const m=mesesOrden().slice(-1)[0]; const g={};
-  if(m) for(const x of S.meses[m].movs){ if(kindOf(x.cat)==="var") g[x.cat]=(g[x.cat]||0)-x.i; }
+  if(m){ for(const x of S.meses[m].movs){ if(kindOf(x.cat)==="var") g[x.cat]=(g[x.cat]||0)-x.i; } if(g["Efectivo"]) g["Efectivo"]=Math.max(0,g["Efectivo"]-movidoEfectivo(m)); }
   for(const c in g){ const pr=presMes(c,+m.slice(5)); if(pr>0&&g[c]>pr) av.push(["warn","🔥",`En ${MESL[+m.slice(5)-1]} <b>${esc(c)}</b> va por ${e0(g[c])}, por encima de los ${e0(pr)} previstos.`]); }
   const mesAct=new Date().getMonth()+1; const dist=mm=>(mm-mesAct+12)%12;
   const recs=recibosAuto().map(r=>({n:(p.etiquetas||{})[r.c]||r.c.replace(/^Recibo · /,""),imp:r.importe,mes:Math.min(...r.meses.map(dist))})).concat((p.recibosManuales||[]).map(r=>({n:r.n,imp:+r.importe||0,mes:dist(+r.mes||1)}))).filter(r=>r.mes>0&&r.mes<=3).sort((a,b)=>a.mes-b.mes);
@@ -264,7 +272,7 @@ function vPresupuesto(){
   const p=S.plan, T=totales(), r=mediaCat(), b=p.presupuesto||{};
   const fijoCats=CAT_ORDER.filter(c=>kindOf(c)==="fijo");
   const L=p.fijos||[]; const grupos=[...new Set(L.map(f=>f.cat))];
-  const fFila=(f,i)=>{ const cs=cargos(f), u=cs[cs.length-1], pr=cs[0];
+  const fFila=(f,i)=>{ const cs=cargos(f), u=ultimoCobro(f), pr=cs[0];
     const cambia=!f.var&&u&&Math.abs(u.a-(+f.importe||0))>0.5;
     const va=f.var?null:pr&&u&&Math.abs(u.a-pr.a)>0.5?(u.a-pr.a)/pr.a:null;
     return `<div class="it"><div class="main">${inTxt("fn-"+i,`fijos.${i}.n`,f.n)}</div>
@@ -272,7 +280,8 @@ function vPresupuesto(){
       <div class="meta"><select class="s" id="ff-${i}" data-path="fijos.${i}.frec" data-doc="plan" ${dis()}>${Object.entries(FREC).map(([k,v])=>`<option value="${k}" ${k===f.frec?"selected":""}>${v}</option>`).join("")}</select>
         <select class="s" id="fc-${i}" data-path="fijos.${i}.cat" data-doc="plan" ${dis()}>${fijoCats.map(c=>`<option ${c===f.cat?"selected":""}>${esc(c)}</option>`).join("")}</select>
         ${f.frec&&f.frec!=="mensual"?`<span>${e2(costeMes(f))} al mes</span>`:""}
-        ${u?`<span class="chip ${cambia?"up":""}">último cargo ${e2(u.a)} · ${u.f.slice(8)}/${u.f.slice(5,7)}</span>`:`<span class="chip cash">en efectivo o sin cargo</span>`}
+        ${u?`<span class="chip ${cambia?"up":""}">último cargo ${e2(u.a)} · ${u.f.slice(8)}/${u.f.slice(5,7)}</span>`:`<span class="chip cash">${f.match?"todavía sin cargo":"en efectivo"}</span>`}
+        <label class="tog"><input type="checkbox" id="fe-${i}" data-path="fijos.${i}.ef" data-doc="plan" data-bool="1" ${pagaEfectivo(f)?"checked":""} ${!f.match?"disabled":""} ${dis()}>Se puede pagar en efectivo</label>
         ${va!==null?`<span class="chip ${va>0?"up":"down"}">${va>0?"sube":"baja"} ${(Math.abs(va)*100).toFixed(1).replace(".",",")}% este año</span>`:""}</div></div>`; };
   const fijosHtml=grupos.map(c=>{ const its=L.map((f,i)=>[f,i]).filter(([f])=>f.cat===c); return `<div class="grp"><span style="display:flex;align-items:center;gap:8px">${cic(c,"sm")}${esc(c)}</span><span>${e0(its.reduce((s,[f])=>s+costeMes(f),0))}</span></div>`+its.map(([f,i])=>fFila(f,i)).join(""); }).join("");
   const et=p.etiquetas||{};
@@ -315,13 +324,15 @@ function vMes(){
   const movs=S.meses[m].movs, b=S.plan.presupuesto||{}, nm=+m.slice(5);
   const g={}; let ing=0,ext=0;
   for(const x of movs){ const k=kindOf(x.cat); if(k==="ing") ing+=x.i; else if(k==="ext") ext-=x.i; else if(k==="var") g[x.cat]=(g[x.cat]||0)-x.i; }
+  const mov=movidoEfectivo(m); if(g["Efectivo"]) g["Efectivo"]=Math.max(0,g["Efectivo"]-mov);
   const esAct=m===hoyYM(); const dias=new Date(+m.slice(0,4),nm,0).getDate(); const ritmo=esAct?new Date().getDate()/dias:1;
   const vcats=CAT_ORDER.filter(c=>kindOf(c)==="var"&&(presMes(c,nm)>0||g[c]));
   const tv=vcats.reduce((s,c)=>s+(g[c]||0),0), pv=vcats.reduce((s,c)=>s+presMes(c,nm),0);
   const fila=c=>{ const gs=g[c]||0, pr=presMes(c,nm), q=pr?gs/pr:(gs>0?1.1:0); const cl=q>1?"over":q>ritmo+.15?"warn":"";
-    return `<div class="brow" data-vercat="${esc(c)}" data-vermes="${m}"><div>${cic(c)}<span>${esc(c)}</span></div><div class="bar"><i class="${cl}" style="width:${Math.min(100,q*100)}%"></i></div><div class="amt"><span class="eur">${e0(gs)}</span> <span class="muted">/ ${e0(pr)}</span></div></div>${c==="Efectivo"&&efectivoFijo(nm)?`<div class="small muted" style="margin:-4px 0 6px">Incluye ${e0(efectivoFijo(nm))} de fijos en efectivo (tenis, Rosa…).</div>`:""}`; };
+    return `<div class="brow" data-vercat="${esc(c)}" data-vermes="${m}"><div>${cic(c)}<span>${esc(c)}</span></div><div class="bar"><i class="${cl}" style="width:${Math.min(100,q*100)}%"></i></div><div class="amt"><span class="eur">${e0(gs)}</span> <span class="muted">/ ${e0(pr)}</span></div></div>${c==="Efectivo"&&mov?`<div class="small muted" style="margin:-4px 0 6px">Solo efectivo suelto: se descuentan ${e0(mov)} pagados en efectivo a fijos (tenis, Rosa, profe…).</div>`:""}`; };
   const curso=nm>=9||nm<=6;
-  const fx=(S.plan.fijos||[]).map(f=>{ const cs=cargos(f,m); const st=!f.match?["cash","en efectivo"]:cs.length?["ok","cobrado "+e2(cs.reduce((s,c)=>s+c.a,0))]:(!curso&&(f.frec==="curso"||f.frec==="semanal"))?["","no toca"]:(f.frec==="bimestral"||f.frec==="plazos"||f.frec==="trimestral")?["","este mes no"]:["pend","pendiente"];
+  const fx=(S.plan.fijos||[]).map(f=>{ const cs=cargos(f,m); const banco=cs.reduce((s,c)=>s+c.a,0); const ef=enEfectivo(f,m);
+    const st=!toca(f,nm)?["","no toca"]:pagaEfectivo(f)&&esperadoMes(f,nm)>0?(banco>0&&ef>0.5?["cash",`${e2(banco)} por banco y ${e2(ef)} en efectivo`]:banco>0?["ok","cobrado "+e2(banco)]:["cash","pagado en efectivo"]):cs.length?["ok","cobrado "+e2(banco)]:(f.frec==="bimestral"||f.frec==="plazos"||f.frec==="trimestral")?["","este mes no"]:["pend","pendiente"];
     return `<div class="it"><div class="main">${esc(f.n)}</div><div class="right"><span class="chip ${st[0]}">${st[1]}</span></div></div>`; }).join("");
   return `<section class="panel">
     <div class="row" style="justify-content:space-between;align-items:center"><select class="s" id="sel-mes" style="font-size:1rem;max-width:none">${ms.slice().reverse().map(x=>`<option value="${x}" ${x===m?"selected":""}>${mLong(x)}</option>`).join("")}</select>
@@ -369,14 +380,14 @@ async function cambiarCat(m,i,cat){
 // ---------- HISTÓRICO ----------
 function vHistorico(){
   const all=mesesOrden(); const cerr=mesesCerrados();
-  const pk=all.map(m=>{ const o={m,fijo:0,anual:0,var:0,ext:0}; for(const x of S.meses[m].movs){ const k=kindOf(x.cat); if(o[k]!==undefined) o[k]-=x.i; } for(const k of ["fijo","anual","var","ext"]) o[k]=Math.max(0,o[k]); return o; });
+  const pk=all.map(m=>{ const o={m,fijo:0,anual:0,var:0,ext:0}; for(const x of S.meses[m].movs){ const k=kindOf(x.cat); if(o[k]!==undefined) o[k]-=x.i; } const mv=movidoEfectivo(m); o.var-=mv; o.fijo+=mv; for(const k of ["fijo","anual","var","ext"]) o[k]=Math.max(0,o[k]); return o; });
   const K=[["fijo","Fijos",COL.fijo],["var","Día a día",COL.var],["anual","Recibos anuales",COL.anual],["ext","Extraordinario",COL.coral||COL.ext]];
   const W=700,H=240,pl=40,pb=24,pt=8; const mx=Math.max(...pk.map(o=>o.fijo+o.var+o.anual+o.ext),1); const top=Math.ceil(mx/1000)*1000; const y=v=>pt+(H-pt-pb)*(1-v/top); const bw=(W-pl-6)/Math.max(pk.length,1);
   let svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Gasto por mes">`;
   for(let v=0;v<=top;v+=1000) svg+=`<line x1="${pl}" x2="${W-6}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end">${v/1000}k</text>`;
   pk.forEach((o,i)=>{ let acc=0; const x=pl+i*bw+bw*.2, w=bw*.6; for(const [k,,c] of K){ const v=o[k]; if(v>0){ svg+=`<rect x="${x}" y="${y(acc+v)}" width="${w}" height="${y(acc)-y(acc+v)}" rx="3" fill="${c}"><title>${mLong(o.m)} · ${e0(v)}</title></rect>`; acc+=v; } } svg+=`<text x="${x+w/2}" y="${H-7}" text-anchor="middle">${mLabel(o.m)}</text>`; });
   svg+="</svg>";
-  const tab={}; for(const m of all) for(const x of S.meses[m].movs){ (tab[x.cat]??={})[m]=(tab[x.cat][m]||0)-x.i; }
+  const tab={}; for(const m of all){ for(const x of S.meses[m].movs){ (tab[x.cat]??={})[m]=(tab[x.cat][m]||0)-x.i; } const mv=movidoEfectivo(m); if(mv&&tab["Efectivo"]) tab["Efectivo"][m]=(tab["Efectivo"][m]||0)-mv; }
   const r=mediaCat();
   const filas=k=>CAT_ORDER.filter(c=>kindOf(c)===k&&tab[c]).map(c=>`<tr data-vercat="${esc(c)}" style="cursor:pointer"><td style="white-space:nowrap">${cic(c,"sm")} ${esc(c)}</td>${all.map(m=>`<td class="r">${tab[c][m]?Math.round(tab[c][m]).toLocaleString("es-ES"):"·"}</td>`).join("")}<td class="r"><b>${Math.round(r[c]||0).toLocaleString("es-ES")}</b></td></tr>`).join("");
   const sec=(t,k)=>`<tr><td colspan="${all.length+2}" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;padding-top:14px">${t}</td></tr>${filas(k)}`;
@@ -733,6 +744,13 @@ function migrar2025(p){
   p.migr2025=true; return p;
 }
 
+function migrarOct26(p){
+  const F=(p.fijos??=[]);
+  for(const f of F){ if(/tenis/i.test(f.n||"")) f.ef=true; if(/rosa/i.test(f.n||"")){ f.ef=true; if(!f.match) f.match="ROSA MARIA G. F."; } if(f.match==="GUILLERMO L.") f.ef=true; }
+  if(!F.some(f=>/rob[oó]tica/i.test(f.n||""))) F.push({n:"Extraescolares: robótica (42 €) y diseño informático (39 €)",cat:"Colegio y Guille",frec:"octmay",importe:81,match:"GRUPO EDUCATIVO ASUNCION",nota:"De octubre a mayo. Se cobran por el Grupo Educativo Asunción."});
+  p.migrOct26=true; return p;
+}
+
 // ---------- arranque ----------
 render();
 (async()=>{
@@ -761,6 +779,6 @@ render();
   const err=e=>setStatus(e&&e.code==="revoked"?"Acceso retirado":"No se pudieron leer los datos; recarga");
   db.collection("meses").onSnapshot(s=>{ const n={}; s.docs.forEach(d=>n[d.id]=JSON.parse(JSON.stringify(d.data()))); const ch=!same(n,S.meses)||!S.ready.meses; S.meses=n; S.ready.meses=true; if(ch){ setStatus(S.writable?"Al día":"Solo lectura"); render(); } },err);
   db.doc("config/altovelo").onSnapshot(d=>{ let p=d.exists?JSON.parse(JSON.stringify(d.data())):null; if(!p){ p=JSON.parse(JSON.stringify(ALTO_DEF)); if(S.writable) db.doc("config/altovelo").set(p).catch(()=>{}); } const ch=!same(p,S.alto)||!S.ready.alto; S.alto=p; S.ready.alto=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
-  db.doc("config/plan").onSnapshot(d=>{ let p=d.exists?JSON.parse(JSON.stringify(d.data())):null; if(p&&!p.migr2025&&S.writable){ p=migrar2025(p); db.doc("config/plan").set(JSON.parse(JSON.stringify(p))).catch(()=>{}); } const ch=!same(p,S.plan)||!S.ready.plan; S.plan=p; S.ready.plan=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
+  db.doc("config/plan").onSnapshot(d=>{ let p=d.exists?JSON.parse(JSON.stringify(d.data())):null; if(p&&S.writable&&(!p.migr2025||!p.migrOct26)){ if(!p.migr2025) p=migrar2025(p); if(!p.migrOct26) p=migrarOct26(p); db.doc("config/plan").set(JSON.parse(JSON.stringify(p))).catch(()=>{}); } const ch=!same(p,S.plan)||!S.ready.plan; S.plan=p; S.ready.plan=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
   db.doc("config/metas").onSnapshot(d=>{ const p=d.exists?JSON.parse(JSON.stringify(d.data())):{metas:[],sim:{ini:0,mes:100,anos:10,r:4}}; const ch=!same(p,S.metas)||!S.ready.metas; S.metas=p; S.ready.metas=true; if(ch&&!(document.activeElement&&document.activeElement.dataset&&document.activeElement.dataset.path)) render(); },err);
 })();
