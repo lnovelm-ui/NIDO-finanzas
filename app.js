@@ -178,7 +178,7 @@ function movidoEfectivo(m){ if(!S.meses[m]) return 0; const sacado=S.meses[m].mo
 function ultimoCobro(f){ const cs=cargos(f); if(!cs.length) return null; const m=cs[cs.length-1].f.slice(0,7); const del=cs.filter(c=>c.f.startsWith(m)); return {f:del[del.length-1].f,a:del.reduce((s,c)=>s+c.a,0)}; }
 function cargos(f, soloMes){
   if(!f.match) return []; const M=f.match.toUpperCase(); const out=[];
-  for(const m of mesesOrden()){ if(soloMes&&m!==soloMes) continue; for(const x of S.meses[m].movs){ const a=-x.i; if(x.i<0&&x.c.toUpperCase().includes(M)&&(f.min==null||a>=f.min)&&(f.max==null||a<=f.max)) out.push({f:x.f,a}); } }
+  for(const m of mesesOrden()){ if(soloMes&&m!==soloMes) continue; for(const x of S.meses[m].movs){ const a=-x.i; const kk=kindOf(x.cat); if(kk==="ext"||kk==="ingx") continue; if(x.i<0&&x.c.toUpperCase().includes(M)&&(f.min==null||a>=f.min)&&(f.max==null||a<=f.max)) out.push({f:x.f,a}); } }
   return out.sort((p,q)=>p.f.localeCompare(q.f));
 }
 function recibosAuto(){
@@ -417,6 +417,7 @@ function vMovs(){
       <div class="right"><span class="eur" style="color:${x.i>0?"var(--mint)":"inherit"}">${e2(x.i)}</span></div>
       <div class="meta"><select class="s" id="c-${m}-${i}" data-m="${m}" data-i="${i}" data-cat="1" ${dis()}>${CAT_ORDER.map(c=>`<option ${c===x.cat?"selected":""}>${esc(c)}</option>`).join("")}</select>
         <input class="t" style="flex:1 1 180px;max-width:360px;font-size:.82rem" id="n-${m}-${i}" data-m="${m}" data-i="${i}" data-nota="1" value="${esc(x.nota||"")}" placeholder="📝 Añadir nota (regalo, error…)" ${dis()}>
+        ${x.i<0?`<button class="btn ghost" data-dividir="${m}|${i}" style="padding:2px 6px;font-size:.8rem" title="Separar parte del importe en otro movimiento" ${dis()}>✂️ Dividir</button>`:""}
         ${S.catAplicar&&S.catAplicar.m===m&&S.catAplicar.i===i?`<button class="btn soft" id="aplicar-todos" style="padding:4px 10px;font-size:.8rem">Aplicar también a los otros ${S.catAplicar.n} de este comercio</button>`:""}</div></div>`).join("")}</div>
     ${rows.length>300?`<p class="note">Se ven los 300 más recientes; filtra para ver el resto.</p>`:""}
   </div></section>`;
@@ -619,6 +620,8 @@ async function leerArchivo(file){
       const f=aFecha(r[cF]), i=Math.round(parseNum(typeof r[cI]==="number"?String(r[cI]).replace(".",","):r[cI])*100)/100, raw=String(r[cC]||"").replace(/\r?\n/g," | ");
       if(!f||!raw||!i) continue;
       const c=limpiar(raw), k=f+"|"+i.toFixed(2)+"|"+claveRegla(c); const n=(vis.get(k)||0)+1; vis.set(k,n);
+      const dv=(S.plan.divisiones||[]).find(d=>raw.toUpperCase().includes(d.match)&&f.startsWith(d.mes)&&Math.abs(-i-d.importe)<0.01);
+      if(dv){ const k1=f+"|"+(-dv.partes[0].i).toFixed(2)+"|"+claveRegla(c); if((ex.get(k1)||0)>0||n<=(ex.get(k)||0)){ dup++; continue; } for(const pt of dv.partes) nuevos.push({f,c,i:-pt.i,cat:pt.cat,nota:pt.nota}); continue; }
       if(n<=(ex.get(k)||0)){ dup++; continue; }
       nuevos.push({f,c,i,cat:categorizar({f,raw,i},S.plan.reglas)});
     }
@@ -676,6 +679,9 @@ function bind(){
   document.querySelectorAll("select[data-cat]").forEach(el=>el.onchange=()=>cambiarCat(el.dataset.m,+el.dataset.i,el.value));
   document.querySelectorAll("input[data-nota]").forEach(el=>el.oninput=()=>{ const x=S.meses[el.dataset.m].movs[+el.dataset.i]; x.nota=el.value; guardarMes(el.dataset.m); });
   const at=$("#aplicar-todos"); if(at) at.onclick=aplicarATodos;
+  document.querySelectorAll("[data-dividir]").forEach(b=>b.onclick=()=>{ const [m,i]=b.dataset.dividir.split("|"); const x=S.meses[m].movs[+i]; const tot=-x.i;
+    const r=prompt(`Este movimiento es de ${e2(tot)}. ¿Qué importe quieres separar en otro movimiento? (por ejemplo, la parte extraordinaria)`); const v=parseNum(r); if(!v||v<=0||v>=tot) return;
+    x.i=-(Math.round((tot-v)*100)/100); S.meses[m].movs.splice(+i+1,0,{f:x.f,c:x.c,i:-v,cat:"Extraordinario",nota:"Parte separada de "+e2(tot)}); guardarMes(m); render(); });
   const hz=$("#hist"); if(hz) hz.querySelectorAll("[data-hrest]").forEach(b=>b.onclick=async()=>{ const it=(S.db.dump()["config/historial"]||{items:[]}).items[+b.dataset.hrest]; if(it&&confirm("¿Volver a como estaba antes de este cambio?")){ await restaurar(it.paths,it.antes,"Vuelta atrás"); toast("Restaurado"); } });
   const file=$("#file"), drop=$("#drop");
   if(file){ file.onchange=()=>file.files[0]&&leerArchivo(file.files[0]); drop.ondragover=e=>{e.preventDefault();drop.classList.add("on");}; drop.ondragleave=()=>drop.classList.remove("on"); drop.ondrop=e=>{e.preventDefault();drop.classList.remove("on"); const f=e.dataTransfer.files[0]; if(f) leerArchivo(f);}; }
