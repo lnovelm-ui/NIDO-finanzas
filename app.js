@@ -188,7 +188,7 @@ function recibosAuto(){
 }
 // La nómina que entra a partir del día 25 es la del mes siguiente
 const sigMes=ym=>{ let [y,m]=ym.split("-").map(Number); m++; if(m>12){m=1;y++;} return y+"-"+String(m).padStart(2,"0"); };
-const mesImputado=x=>x.cat==="Nómina"&&+x.f.slice(8)>=25?sigMes(x.f.slice(0,7)):x.f.slice(0,7);
+const mesImputado=x=>(x.cat==="Nómina"||x.cat==="Aportación Cisco")&&+x.f.slice(8)>=25?sigMes(x.f.slice(0,7)):x.f.slice(0,7);
 function ingresosMes(m){ let t=0; for(const mm of [m, ...mesesOrden().filter(z=>sigMes(z)===m)]) for(const x of (S.meses[mm]||{movs:[]}).movs) if(kindOf(x.cat)==="ing"&&mesImputado(x)===m) t+=x.i; return t; }
 const presMes=(c,nm)=>(+(S.plan.presupuesto||{})[c]||0);
 function totales(){
