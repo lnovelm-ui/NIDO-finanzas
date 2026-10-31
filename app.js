@@ -20,6 +20,7 @@ const CATS = {
   "Suscripciones":            {k:"fijo", c:"#a855f7", e:"📺"},
   "Supermercado":             {k:"var",  c:"#22c55e", e:"🛒"},
   "Restaurantes y cafés":     {k:"var",  c:"#f97316", e:"☕"},
+  "Desayunos":                {k:"var",  c:"#d97706", e:"🥐"},
   "Combustible y coche":      {k:"var",  c:"#ef4444", e:"⛽"},
   "Farmacia y salud":         {k:"var",  c:"#06b6d4", e:"💊"},
   "Compras online":           {k:"var",  c:"#c026d3", e:"📦"},
@@ -111,6 +112,7 @@ const RULES = [
   [/BIZUM ENVIADO.*ROSA MARIA G\. F\./, "Limpieza del hogar"],
   [/BIZUM ENVIADO/, "Bizum a personas"],
   [/AQUAVELIS|SOUL GAMES|SOULD PARK|QUICKETS|FUSION MALAGA|TENNESSEE|FNAC|LA FABRICA DEL EJERCICIO|ALLIANCE VENDING|FLORISTERIA|COPYCAT|PLIM|PINTURAS|SECOSHOP|LATIGO|NEW BE|MGI/, "Ocio"],
+  [/LOS MORALES|AL PUNTO/, "Desayunos"],
   [/^OP\.TARJ|DEVOL\.OP\.TARJ|ABONO COMERCIO|CANCELACION OP\.TARJ/, "Restaurantes y cafés"],
 ];
 
