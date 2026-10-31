@@ -205,6 +205,80 @@ function totales(){
   return {ingresos,huchas,fijos,anual,variable,margen,varReal,margenReal:ingresos-huchas-fijos-anual-varReal};
 }
 
+// ---------- CIERRE DE MES ----------
+const HUCHA_CATS=["Hucha Guille","Cuenta Laura","Hucha viajes"];
+function cierreDe(m){
+  const d=S.meses[m]; if(!d) return null;
+  const prev=mesesOrden().filter(z=>z<m).slice(-9);
+  const media={}; for(const z of prev){ for(const x of S.meses[z].movs){ const k=kindOf(x.cat); if(k==="fijo"||k==="var") media[x.cat]=(media[x.cat]||0)-x.i; } }
+  for(const c in media) media[c]/=Math.max(prev.length,1);
+  const ing=ingresosMes(m); let ingx=0, huchas=0, inversion=0; const porCat={}, extras=[], movCat={};
+  for(const x of d.movs){
+    const k=kindOf(x.cat);
+    if(k==="ingx"){ ingx+=x.i; continue; }
+    if(k==="ing") continue;
+    if(k==="aho"){ if(HUCHA_CATS.includes(x.cat)) huchas-=x.i; else if(x.cat==="Inversión") inversion-=x.i; continue; }
+    if(k==="ext"||k==="anual"){ extras.push(x); continue; }
+    // un cargo suelto muy por encima de lo normal en su categoría (p. ej. el IBI) se trata como extra
+    if(x.i<-150 && -x.i>3*Math.max(media[x.cat]||0,1)){ extras.push(x); continue; }
+    porCat[x.cat]=(porCat[x.cat]||0)-x.i; (movCat[x.cat]??=[]).push(x);
+  }
+  const gasto=Object.values(porCat).reduce((s,v)=>s+v,0);
+  const gExtra=extras.reduce((s,x)=>s-x.i,0);
+  const libre=ing-gasto-huchas;
+  const sube=[], baja=[];
+  for(const c of new Set([...Object.keys(porCat),...Object.keys(media)])){
+    const v=porCat[c]||0, a=media[c]||0; if(!prev.length) break;
+    if(a>0&&v>a*1.25&&v-a>30) sube.push({c,v,a,top:(movCat[c]||[]).filter(x=>x.i<0).sort((p,q)=>p.i-q.i).slice(0,2)});
+    else if(a>0&&v<a*0.8&&a-v>30) baja.push({c,v,a});
+  }
+  sube.sort((p,q)=>(q.v-q.a)-(p.v-p.a)); baja.sort((p,q)=>(q.a-q.v)-(p.a-p.v));
+  const ult=d.movs.reduce((s,x)=>x.f>s?x.f:s,"");
+  const completo=ult.slice(0,7)>m||+ult.slice(8)>=28;
+  return {m,prev:prev.length,ing,ingx,huchas,inversion,gasto,gExtra,extras,libre,sube,baja,ult,completo,porCat,movCat,media};
+}
+function vCierre(m,opts={}){
+  const R=cierreDe(m); if(!R) return "";
+  const ML=MESL[+m.slice(5)-1], sig=MESL[+sigMes(m).slice(5)-1];
+  const fx=x=>`${x.f.slice(8)}/${x.f.slice(5,7)}`;
+  const nom=x=>esc(x.c.replace(/^Recibo · /,"").replace(/^WWW\.AMAZON\*\S+.*$/,"Amazon").replace(/\s+-\s+amzn\.com\/bill$/,""));
+  const signo=v=>v>=0?`os han sobrado <b>${e0(v)}</b>`:`os han faltado <b>${e0(-v)}</b>`;
+  const res=R.libre-R.gExtra+R.ingx;
+  let h=`<div class="card" id="cierre"><div class="card-h"><h2>🧾 Cierre de ${ML}</h2>${opts.sel||`<span class="small muted">${R.completo?"mes completo":"provisional"}</span>`}</div>`;
+  if(!R.completo) h+=`<div class="alert info" style="margin-bottom:10px"><span class="ic em">⏳</span><div>El último movimiento cargado es del ${fx({f:R.ult})}. Sube el extracto hasta final de mes para que el cierre sea fiable.</div></div>`;
+  h+=`<p style="margin:0 0 12px">En ${ML} entraron ${e0(R.ing)} de ingresos normales. El gasto de la casa fue de ${e0(R.gasto)} y a las huchas fueron ${e0(R.huchas)}, así que sin contar extras ${signo(R.libre)}.${R.extras.length?` Con los extras (${e0(R.gExtra)})${R.ingx?` y los ingresos extra (${e0(R.ingx)})`:""} el mes cierra en <b>${res>=0?"+":"−"}${e0(Math.abs(res))}</b>.`:""}</p>`;
+  h+=`<div class="tiles" style="margin-bottom:12px">
+    <div class="tile">${tic("💶","var(--sea-soft)")}<div class="l">Ingresos</div><div class="v">${e0(R.ing)}</div><div class="s">nómina, Cisco y otros</div></div>
+    <div class="tile">${tic("🏠","var(--mint-soft)")}<div class="l">Gasto de la casa</div><div class="v">${e0(R.gasto)}</div><div class="s">fijos y día a día</div></div>
+    <div class="tile">${tic("🐷","var(--sea-soft)")}<div class="l">Huchas</div><div class="v">${e0(R.huchas)}</div><div class="s">cuentan como gasto fijo</div></div>
+    <div class="tile">${tic(R.libre>=0?"✅":"⚠️",R.libre>=0?"var(--mint-soft)":"var(--coral-soft)")}<div class="l">Libre sin extras</div><div class="v">${e0(R.libre)}</div><div class="s">${R.extras.length?`con extras ${res>=0?"+":"−"}${e0(Math.abs(res))}`:"sin extras este mes"}</div></div>
+  </div>`;
+  if(R.extras.length){ const ex=[...R.extras].sort((p,q)=>p.i-q.i);
+    h+=`<h3 style="margin:14px 0 6px;font-size:.95rem">✨ Lo extraordinario</h3><div class="list">${ex.map(x=>`<div class="it"><div class="main">${cic(x.cat)}<div style="display:flex;flex-direction:column;min-width:0"><span>${nom(x)}</span><span class="small muted">${fx(x)}${x.nota?" · "+esc(x.nota):""}</span></div></div><div class="right">${e2(-x.i)}</div></div>`).join("")}</div>`;
+    if(R.ingx) h+=`<p class="note" style="margin:6px 0 0">Entraron además ${e2(R.ingx)} como ingresos extra (regalos, herencia, devoluciones…).</p>`;
+    if(R.inversion) h+=`<p class="note" style="margin:4px 0 0">Salieron ${e0(R.inversion)} a inversión; es ahorro, no gasto.</p>`; }
+  const av=[];
+  for(const s of R.sube.slice(0,4)) av.push(["warn","🔥",`<b>${esc(s.c)}</b>: ${e0(s.v)} frente a ${e0(s.a)} de media (+${e0(s.v-s.a)}).${s.top.length?` Lo que más pesó: ${s.top.map(x=>`${nom(x)} ${e0(-x.i)}${x.nota?` (${esc(x.nota)})`:""}`).join(", ")}.`:""}`]);
+  for(const b of R.baja.slice(0,2)) av.push(["ok","👏",`<b>${esc(b.c)}</b>: ${e0(b.v)}, ${e0(b.a-b.v)} menos que vuestra media.`]);
+  if(av.length) h+=`<h3 style="margin:14px 0 6px;font-size:.95rem">🚨 Lo que llama la atención</h3><div class="alerts">${av.map(a=>`<div class="alert ${a[0]}"><span class="ic em">${a[1]}</span><div>${a[2]}</div></div>`).join("")}</div>`;
+  // sugerencias para el mes siguiente
+  const su=[]; const red=v=>Math.max(10,Math.round(v/10)*10);
+  for(const s of R.sube.slice(0,2)) su.push(`Poned un tope de unos ${e0(red(s.a))} en ${esc(s.c)} para ${sig}; este mes se fue a ${e0(s.v)}.`);
+  const tel=R.media["Telefonía e internet"]||0; if(tel>120) su.push(`Telefonía e internet se lleva unos ${e0(tel)} al mes. Revisar la tarifa o pedir una contraoferta puede ahorrar bastante.`);
+  for(const x of R.extras) if(kindOf(x.cat)==="fijo"&&-x.i>300) su.push(`${nom(x)}, de ${e0(-x.i)}, volverá el año que viene: apartad unos ${e0(-x.i/12)} al mes para que no descuadre.`);
+  const des=(R.movCat["Desayunos"]||[]).length; if(des>=12) su.push(`${des} desayunos fuera este mes, ${e0(R.porCat["Desayunos"]||0)}. Son poco cada vez pero suman.`);
+  if(R.libre<0) su.push(`Sin contar extras el mes ha salido en negativo: conviene revisar el día a día antes de mover dinero a otras cuentas.`);
+  if(!su.length) su.push(`Mes tranquilo: nada se ha disparado. Seguid igual en ${sig}.`);
+  h+=`<h3 style="margin:14px 0 6px;font-size:.95rem">🎯 Para ${sig}</h3><div class="alerts">${su.slice(0,4).map(t=>`<div class="alert info"><span class="ic em">💡</span><div>${t}</div></div>`).join("")}</div>`;
+  if(R.prev<2) h+=`<p class="note" style="margin:8px 0 0">Hay pocos meses anteriores para comparar; las alertas mejorarán cuando haya más historia.</p>`;
+  return h+`</div>`;
+}
+// En Inicio, el cierre se muestra del día 28 a fin de mes (el mes en curso) y del 1 al 10 (el mes anterior)
+function mesCierreInicio(){ const d=new Date(), dia=d.getDate(), h=hoyYM(); let m=null;
+  if(dia<=10){ const [y,mm]=h.split("-").map(Number); m=mm===1?(y-1)+"-12":y+"-"+String(mm-1).padStart(2,"0"); }
+  else if(dia>=28) m=h;
+  return m&&S.meses[m]?m:null; }
+
 // ---------- guardado ----------
 let tPlan=null,tMetas=null;
 // Los cambios quedan pendientes hasta pulsar «Guardar»; «Descartar» vuelve a lo último guardado.
@@ -301,7 +375,9 @@ function vInicio(){
   const recs=recibosAuto().map(r=>({n:(p.etiquetas||{})[r.c]||r.c.replace(/^Recibo · /,""),imp:r.importe,mes:Math.min(...r.meses.map(dist))})).concat((p.recibosManuales||[]).map(r=>({n:r.n,imp:+r.importe||0,mes:dist(+r.mes||1)}))).filter(r=>r.mes>0&&r.mes<=3).sort((a,b)=>a.mes-b.mes);
   for(const r of recs) av.push(["info","🗓️",`En ${r.mes===1?"un mes":r.mes+" meses"} llega <b>${esc(r.n)}</b>${r.imp?` (${e0(r.imp)})`:", todavía sin importe apuntado"}.`]);
   if(!av.length) av.push(["ok","✅","Todo en orden: ningún precio ha cambiado y el gasto del mes va dentro de lo previsto."]);
+  const mc=mesCierreInicio();
   return `<section class="panel dash"><div class="col">
+    ${mc?vCierre(mc):""}
     <div class="hero">
       <div><div class="lbl">Cada mes os quedan para ahorrar</div><div class="big">${e0(T.margen)}</div>
       <div class="sub">de ${e0(T.ingresos)} que entran, si cumplís el presupuesto. Gastando como hasta ahora serían ${e0(T.margenReal)}.</div></div>
@@ -451,7 +527,10 @@ function vHistorico(){
   const r=mediaCat();
   const filas=k=>CAT_ORDER.filter(c=>kindOf(c)===k&&tab[c]).map(c=>`<tr data-vercat="${esc(c)}" style="cursor:pointer"><td style="white-space:nowrap">${cic(c,"sm")} ${esc(c)}</td>${all.map(m=>`<td class="r">${tab[c][m]?Math.round(tab[c][m]).toLocaleString("es-ES"):"·"}</td>`).join("")}<td class="r"><b>${Math.round(r[c]||0).toLocaleString("es-ES")}</b></td></tr>`).join("");
   const sec=(t,k)=>`<tr><td colspan="${all.length+2}" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;padding-top:14px">${t}</td></tr>${filas(k)}`;
+  const cm=(S.cierreSel&&S.meses[S.cierreSel])?S.cierreSel:(cerr.slice(-1)[0]||all.slice(-1)[0]);
+  const sel=`<select id="cierre-sel" class="t" style="width:auto;border-color:var(--line)" aria-label="Mes del cierre">${[...all].reverse().map(m=>`<option value="${m}" ${m===cm?"selected":""}>${mLong(m)}</option>`).join("")}</select>`;
   return `<section class="panel">
+    ${cm?vCierre(cm,{sel}):""}
     <div class="card"><div class="card-h"><h2>📊 Gasto por mes</h2></div>
       <div class="legend" style="margin-bottom:8px">${K.map(k=>`<span><span class="dot" style="background:${k[2]}"></span>${k[1]}</span>`).join("")}</div>
       <div class="tbl">${svg}</div></div>
@@ -646,6 +725,7 @@ function setPath(obj,path,val){
   o[ks[ks.length-1]]=val;
 }
 function bind(){
+  const cs=document.getElementById("cierre-sel"); if(cs) cs.onchange=()=>{ S.cierreSel=cs.value; render(); };
   document.querySelectorAll("[data-path]").forEach(el=>{
     const upd=()=>{ const isNum=el.dataset.num==="1"; const v=el.dataset.bool==="1"?el.checked:isNum?parseNum(el.value):el.value;
       let path=el.dataset.path;
