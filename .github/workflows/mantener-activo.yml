@@ -1,17 +1,23 @@
-# Hace una consulta mínima a la base de datos de Nido cada tres días
-# para que Supabase (plan gratuito) no pause el proyecto por inactividad.
-# No lee ni modifica ningún dato: solo llama a la función ping(), que devuelve 1.
+# Mantiene despierto el proyecto de Supabase de Nido (plan gratuito).
+# Supabase avisó de inactividad aunque el ping cada tres días funcionaba,
+# así que ahora se ejecuta a diario y además de ping() consulta la tabla real
+# de Nido y el servicio de acceso, como hace la app al abrirse. No lee datos:
+# sin sesión, la tabla rechaza la consulta. No modifica nada.
 name: Mantener Nido activo
 on:
   schedule:
-    - cron: "17 6 */3 * *"
+    - cron: "17 6 * * *"
   workflow_dispatch:
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping a Supabase
+      - name: Consultas a Supabase
+        env:
+          URL: https://vaqbeirrqtdcpzolxpap.supabase.co
+          KEY: sb_publishable_yiuLOOWVwbTRT65Llr2PCw_HtjFDxIC
         run: |
-          curl -fsS -X POST "https://vaqbeirrqtdcpzolxpap.supabase.co/rest/v1/rpc/ping" \
-            -H "apikey: sb_publishable_yiuLOOWVwbTRT65Llr2PCw_HtjFDxIC" \
-            -H "Content-Type: application/json" -d '{}'
+          curl -fsS -X POST "$URL/rest/v1/rpc/ping" -H "apikey: $KEY" -H "Content-Type: application/json" -d '{}'
+          echo
+          curl -sS -o /dev/null -w "docs: %{http_code}\n" "$URL/rest/v1/docs?select=path&limit=1" -H "apikey: $KEY"
+          curl -sS -o /dev/null -w "auth: %{http_code}\n" "$URL/auth/v1/health" -H "apikey: $KEY"
